@@ -5,28 +5,37 @@ import Foundation
 /// underlying provider (a Claude sub used inside pi lands on the Claude card) rather than shown on a
 /// card of its own.
 ///
-/// Only providers OpenUsage already has a card for are listed. Pi providers with no OpenUsage
-/// equivalent are intentionally absent and left for future work:
-/// - `nvidia-nim` — no OpenUsage card.
-///
-/// Mapped here but not yet consumed (only Claude and Codex read the pi slice today; the rest have no
-/// local usage-trend card to fold into, or use a different spend path): `cursor` (Cursor's trend is
-/// built from its CSV export), `zai`/`zhipu`, `google-antigravity`, `github-copilot`.
+/// Only direct provider names and explicit aliases with an existing OpenUsage card are mapped.
+/// A gateway belongs to its own card regardless of which model it serves; model names must never
+/// imply account ownership. Unrecognized/custom providers stay unmapped until explicitly supported.
 enum PiProviderMapping {
     /// pi `provider` value → OpenUsage `Provider.id`.
     static let providerToCard: [String: String] = [
         "anthropic": "claude",
+        "claude": "claude",
         "claude-agent-sdk": "claude",
+        "openai": "codex",
         "openai-codex": "codex",
+        "codex": "codex",
         "cursor": "cursor",
+        "xai": "grok",
+        "grok": "grok",
         "zai": "zai",
         "zhipu": "zai",
+        "zai-coding": "zai",
+        "zai-coding-cn": "zai",
+        "zhipu-coding": "zai",
         "google-antigravity": "antigravity",
-        "github-copilot": "copilot"
+        "github-copilot": "copilot",
+        "ollama": "ollama",
+        "opencode": "opencode",
+        "opencode-go": "opencode",
+        "opencode-zen": "opencode",
+        "openrouter": "openrouter"
     ]
-
+    
     /// The OpenUsage card id for a pi provider, or nil when pi used a provider OpenUsage doesn't track.
     static func cardID(forPiProvider provider: String) -> String? {
-        providerToCard[provider]
+        providerToCard[provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()]
     }
 }

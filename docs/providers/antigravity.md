@@ -42,6 +42,10 @@ Subagents that Antigravity launches with a model tier (`flash_lite`, `flash`, `p
 
 The transcript logs don't include token accounting, so they aren't used. Missing or unpriced models aren't assigned an invented price, and unusually large generation records are skipped with a warning to keep memory usage bounded.
 
+Pi sessions recorded with provider `google-antigravity` are added to local spend and usage history.
+They remain available without an Antigravity login or when the live quota request fails; the card
+shows a warning for the missing live meters. See [Pi Usage](pi.md).
+
 ## Troubleshooting
 
 - **"Start Antigravity or run `agy`…"** — sign in to the Antigravity app (or run `agy`) so a usable token exists, then refresh.

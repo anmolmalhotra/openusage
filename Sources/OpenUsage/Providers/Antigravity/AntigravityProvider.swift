@@ -15,21 +15,23 @@ import Foundation
 @MainActor
 final class AntigravityProvider: ProviderRuntime {
     let provider = Provider(id: "antigravity", displayName: "Antigravity", icon: .providerMark("antigravity"))
-
+    
     let authStore: AntigravityAuthStore
     let usageClient: AntigravityUsageClient
     let discovery: LanguageServerDiscovery
     let dbUsageScanner: AntigravityDbUsageScanner
+    let piUsageScanner: PiUsageScanner
     let now: @Sendable () -> Date
     let pricing: @Sendable () async -> ModelPricing
-
+    
     private static let usageSourceNote = "From your Antigravity conversations (estimated)"
-
+    
     init(
         authStore: AntigravityAuthStore = AntigravityAuthStore(),
         usageClient: AntigravityUsageClient = AntigravityUsageClient(),
         discovery: LanguageServerDiscovery = LanguageServerDiscovery(),
         dbUsageScanner: AntigravityDbUsageScanner = AntigravityDbUsageScanner(),
+        piUsageScanner: PiUsageScanner = .shared,
         now: @escaping @Sendable () -> Date = Date.init,
         pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
@@ -37,10 +39,11 @@ final class AntigravityProvider: ProviderRuntime {
         self.usageClient = usageClient
         self.discovery = discovery
         self.dbUsageScanner = dbUsageScanner
+        self.piUsageScanner = piUsageScanner
         self.now = now
         self.pricing = pricing
     }
-
+    
     var widgetDescriptors: [WidgetDescriptor] {
         [
             .percent(id: AntigravityMetric.geminiID, provider: provider, title: AntigravityMetric.sessionLabel, sessionStartSignal: .zeroUsage)
@@ -55,11 +58,11 @@ final class AntigravityProvider: ProviderRuntime {
                 .exportingHistory(
                     scope: .machineLocal,
                     estimatedCost: true,
-                    sourceNote: Self.usageSourceNote
+                    sourceNote: "From your Antigravity conversations and Pi logs (estimated)"
                 )
         ] + WidgetDescriptor.spendTiles(provider: provider)
     }
-
+    
     func hasLocalCredentials() async -> Bool {
         // The Keychain login is the source of truth. The app-owned access-token cache is derivative
         // and must never independently enable the provider after logout.
@@ -69,7 +72,7 @@ final class AntigravityProvider: ProviderRuntime {
             }
             guard keychainToken != nil else {
                 await loadOffMainActor { [authStore] in authStore.discardCachedToken() }
-                return false
+                return await piUsageScanner.hasUsage(cardID: provider.id)
             }
             return true
         } catch {
@@ -77,13 +80,34 @@ final class AntigravityProvider: ProviderRuntime {
             return true
         }
     }
-
+    
     func refresh() async -> ProviderSnapshot {
+        let refreshedAt = now()
+        let snapshot = await refreshNative(refreshedAt: refreshedAt)
+        let modelPricing = await pricing()
+        let piScan = await piUsageScanner.scan(
+            cardID: provider.id, now: refreshedAt, pricing: modelPricing
+        )
+        // A quota failure must not replace intact local history with only Pi's smaller slice.
+        let nativeScan: LogUsageScan?
+        if snapshot.errorCategory != nil {
+            nativeScan = await dbUsageScanner.scan(daysBack: 30, now: refreshedAt, pricing: modelPricing)
+        } else {
+            nativeScan = nil
+        }
+        let localScan = DailyUsageAccumulator.merged([nativeScan, piScan])
+        return PiUsageHistory.appending(
+            localScan, to: snapshot,
+            sourceNote: piScan == nil ? "From your Antigravity conversations (estimated)" : "From your Antigravity conversations and Pi logs (estimated)",
+            now: refreshedAt
+        )
+    }
+    
+    private func refreshNative(refreshedAt: Date) async -> ProviderSnapshot {
         do {
             var result = try await probe()
-            let refreshedAt = now()
             var usageHistory: ProviderUsageHistory?
-
+            
             if let scan = await dbUsageScanner.scan(daysBack: 30, now: refreshedAt, pricing: await pricing()) {
                 usageHistory = ProviderUsageHistory(
                     series: scan.series,
@@ -105,7 +129,7 @@ final class AntigravityProvider: ProviderRuntime {
                     note: Self.usageSourceNote
                 )
             }
-
+            
             return ProviderSnapshot.make(
                 provider: provider,
                 plan: result.plan,
@@ -117,12 +141,12 @@ final class AntigravityProvider: ProviderRuntime {
             return ProviderSnapshot.error(provider: provider, error: error)
         }
     }
-
+    
     private struct StrategyResult {
         var plan: String?
         var lines: [MetricLine]
     }
-
+    
     private func probe() async throws -> StrategyResult {
         if let result = await probeLS(
             processName: "language_server",
@@ -137,9 +161,9 @@ final class AntigravityProvider: ProviderRuntime {
         }
         return try await probeCloudCode()
     }
-
+    
     // MARK: - Language server
-
+    
     private func probeLS(processName: String, markers: [String], csrfFlag: String, portFlag: String?) async -> StrategyResult? {
         let discovery = self.discovery
         let options = LanguageServerDiscovery.Options(
@@ -149,7 +173,7 @@ final class AntigravityProvider: ProviderRuntime {
             portFlag: portFlag
         )
         guard let discovered = await loadOffMainActor({ discovery.discover(options) }) else { return nil }
-
+        
         // HTTPS first (the LS serves a self-signed cert), then HTTP, then the HTTP-only extension port.
         var endpoints: [(scheme: String, port: Int)] = []
         for port in discovered.ports {
@@ -159,7 +183,7 @@ final class AntigravityProvider: ProviderRuntime {
         if let extensionPort = discovered.extensionPort {
             endpoints.append(("http", extensionPort))
         }
-
+        
         for endpoint in endpoints {
             // The quota summary is authoritative (merged pools + weekly windows), so it goes first.
             // A parsed summary — even one with zero usable buckets — ends the probe: the legacy
@@ -184,18 +208,18 @@ final class AntigravityProvider: ProviderRuntime {
                     AppLog.warn(LogTag.plugin("antigravity"), "RetrieveUserQuotaSummary HTTP \(summary.statusCode); falling back to legacy quota endpoints")
                 }
             }
-
+            
             guard let response = await usageClient.callLS(scheme: endpoint.scheme, port: endpoint.port, csrf: discovered.csrf, method: "GetUserStatus"),
                   (200..<300).contains(response.statusCode)
             else {
                 continue
             }
-
+            
             if let parsed = AntigravityUsageMapper.parseUserStatus(response.body) {
                 let lines = AntigravityUsageMapper.buildLines(parsed.configs)
                 if !lines.isEmpty { return StrategyResult(plan: parsed.plan, lines: lines) }
             }
-
+            
             // The endpoint answered but GetUserStatus had nothing usable — try the documented fallback.
             if let fallback = await usageClient.callLS(scheme: endpoint.scheme, port: endpoint.port, csrf: discovered.csrf, method: "GetCommandModelConfigs"),
                (200..<300).contains(fallback.statusCode),
@@ -206,20 +230,20 @@ final class AntigravityProvider: ProviderRuntime {
         }
         return nil
     }
-
+    
     // MARK: - Cloud Code
-
+    
     private func probeCloudCode() async throws -> StrategyResult {
         let authStore = self.authStore
         let keychainToken = try await loadOffMainActor { try authStore.loadKeychainToken() }
-
+        
         guard let keychainToken else {
             // Proven logout invalidates the derived cache. A Keychain read failure throws above and
             // deliberately leaves the cache untouched for recovery.
             await loadOffMainActor { authStore.discardCachedToken() }
             throw AntigravityError.notSignedIn
         }
-
+        
         var tokens: [String] = []
         if let access = keychainToken.accessToken, authStore.isUsable(expiry: keychainToken.expiry) {
             tokens.append(access)
@@ -228,11 +252,11 @@ final class AntigravityProvider: ProviderRuntime {
            !tokens.contains(cached) {
             tokens.append(cached)
         }
-
+        
         // We have something to authenticate with if any token was tried or a refresh token exists. Used
         // to tell a transient outage ("temporarily unavailable") apart from a genuine "not signed in".
         let hasCredentials = !tokens.isEmpty || (keychainToken.refreshToken?.isEmpty == false)
-
+        
         var sawAuthFailure = false
         for token in tokens {
             switch await fetchCloudCode(token: token) {
@@ -241,7 +265,7 @@ final class AntigravityProvider: ProviderRuntime {
             case .unavailable: break
             }
         }
-
+        
         // Only refresh on evidence of an auth failure (or no token to try) — a transient Cloud Code
         // outage must not trigger a Google OAuth refresh every cycle.
         if sawAuthFailure || tokens.isEmpty, let refreshToken = keychainToken.refreshToken {
@@ -268,7 +292,7 @@ final class AntigravityProvider: ProviderRuntime {
             case .unavailable: throw AntigravityError.unavailable
             }
         }
-
+        
         // Reached only when no refresh was attempted (no refresh token): a rejected token with no way to
         // refresh is genuinely expired auth.
         if sawAuthFailure { throw AntigravityError.authExpired }
@@ -276,13 +300,13 @@ final class AntigravityProvider: ProviderRuntime {
         if hasCredentials { throw AntigravityError.unavailable }
         throw AntigravityError.notSignedIn
     }
-
+    
     private enum CloudCodeProbe {
         case success(StrategyResult)
         case authFailed
         case unavailable
     }
-
+    
     private func fetchCloudCode(token: String) async -> CloudCodeProbe {
         // Authoritative first: the quota summary (merged pools + weekly windows). A parsed summary —
         // even one with zero usable buckets — is the answer and must never fall into the legacy chain
@@ -299,7 +323,7 @@ final class AntigravityProvider: ProviderRuntime {
         case .unavailable:
             break
         }
-
+        
         // Legacy: fetchAvailableModels — the full Antigravity model set (Gemini + Claude + GPT-OSS).
         switch await usageClient.cloudCode(path: AntigravityUsageClient.fetchModelsPath, token: token, userAgent: "antigravity", body: [:]) {
         case .authFailed:
@@ -312,7 +336,7 @@ final class AntigravityProvider: ProviderRuntime {
         case .unavailable:
             break
         }
-
+        
         // Fallback: loadCodeAssist (plan + project) → retrieveUserQuota (Gemini-only buckets).
         var plan: String?
         var project: String?
@@ -323,7 +347,7 @@ final class AntigravityProvider: ProviderRuntime {
             project = AntigravityUsageMapper.parseProject(data)
         case .unavailable: break
         }
-
+        
         var quota = await usageClient.cloudCode(
             path: AntigravityUsageClient.retrieveQuotaPath,
             token: token,
@@ -342,7 +366,7 @@ final class AntigravityProvider: ProviderRuntime {
         }
         return .unavailable
     }
-
+    
     private func loadPlan(token: String) async -> String? {
         if case .ok(let data) = await usageClient.cloudCode(path: AntigravityUsageClient.loadCodeAssistPath, token: token, userAgent: "agy", body: [:]) {
             return AntigravityUsageMapper.parseLoadCodeAssistPlan(data)

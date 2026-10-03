@@ -26,6 +26,14 @@ Since June 2026 GitHub Copilot bills all plans by **AI credits**, so what each a
 
 A dollar credit figure (e.g. "$12 of $15 used") isn't shown: GitHub only exposes that through its logged-in web billing page, which would require reading browser cookies — OpenUsage does not do that. Editors like VS Code show the same credit *percentage* from this endpoint, not a dollar amount.
 
+## Pi Usage History
+
+[Pi sessions](pi.md) recorded with provider `github-copilot` contribute local Usage Trend, Today,
+Yesterday, and Last 30 Days metrics. All four start disabled; enable them in Customize. These
+figures cover Pi activity only, separate from the service's live quota or billing metrics.
+Local history remains available without a native login or after a failed live request, with a
+warning explaining the unavailable meters. Pi logs do not supply credentials for those meters.
+
 ## Where credentials come from
 
 Checked in this order (prompt-free files first, Keychain last):

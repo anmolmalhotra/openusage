@@ -33,6 +33,9 @@ Just be signed into the Cursor app. OpenUsage reads Cursor's local state databas
 
 Today, Yesterday, Last 30 Days, and Usage Trend come from Cursor's usage export. OpenUsage uses the exported token counts and shared model pricing to estimate the cost locally. Cursor's export may occasionally arrive late, so the newest figures can lag behind current activity. OpenUsage leaves isolated malformed rows out instead of silently counting broken values as zero. A failed download, an export that takes longer than 20 seconds, invalid export schema, or broken CSV structure leaves spend history unavailable for that refresh; live plan usage still updates. Each failure is recorded in the diagnostic log without including the exported usage data.
 
+Pi usage routed through Cursor appears here only when Cursor includes it in the account's usage
+export. OpenUsage does not add Pi log totals on top of that export. See [Pi Usage](pi.md).
+
 ## Troubleshooting
 
 - **"Not logged in" / token errors** — open Cursor and make sure you're signed in, then refresh.

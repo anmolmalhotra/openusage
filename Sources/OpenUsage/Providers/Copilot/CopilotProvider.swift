@@ -5,7 +5,7 @@ final class CopilotProvider: ProviderRuntime {
     /// `UserDefaults` key caching the slug of the org whose billing carried Copilot credit usage, so
     /// steady-state refreshes make one billing call instead of re-probing every org.
     static let billingOrgDefaultsKey = "copilot.billingOrg"
-
+    
     let provider = Provider(
         id: "copilot",
         displayName: "Copilot",
@@ -15,27 +15,33 @@ final class CopilotProvider: ProviderRuntime {
             .init(label: "Dashboard", url: "https://github.com/settings/billing")
         ]
     )
-
+    
     let authStore: CopilotAuthStore
     let usageClient: CopilotUsageClient
     let orgBillingClient: CopilotOrgBillingClient
     let defaults: UserDefaults
+    let piUsageScanner: PiUsageScanner
+    let pricing: @Sendable () async -> ModelPricing
     let now: @Sendable () -> Date
-
+    
     init(
         authStore: CopilotAuthStore = CopilotAuthStore(),
         usageClient: CopilotUsageClient = CopilotUsageClient(),
         orgBillingClient: CopilotOrgBillingClient = CopilotOrgBillingClient(),
         defaults: UserDefaults = .standard,
-        now: @escaping @Sendable () -> Date = Date.init
+        piUsageScanner: PiUsageScanner = .shared,
+        now: @escaping @Sendable () -> Date = Date.init,
+        pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
         self.authStore = authStore
         self.usageClient = usageClient
         self.orgBillingClient = orgBillingClient
         self.defaults = defaults
+        self.piUsageScanner = piUsageScanner
+        self.pricing = pricing
         self.now = now
     }
-
+    
     var widgetDescriptors: [WidgetDescriptor] {
         [
             .percent(id: "copilot.premium", provider: provider, title: "Credits")
@@ -49,33 +55,49 @@ final class CopilotProvider: ProviderRuntime {
             .percent(id: "copilot.chat", provider: provider, title: "Chat")
                 .exportingLimit("chat", unit: "percent"),
             .percent(id: "copilot.completions", provider: provider, title: "Completions")
-                .exportingLimit("completions", unit: "percent")
-        ]
+                .exportingLimit("completions", unit: "percent"),
+            .usageTrend(provider: provider)
+                .exportingHistory(
+                    scope: .machineLocal,
+                    estimatedCost: true,
+                    sourceNote: "From your pi sessions (estimated)"
+                )
+        ] + WidgetDescriptor.spendTiles(provider: provider)
     }
-
+    
     func hasLocalCredentials() async -> Bool {
         // Same source as `refresh()`: editor config, gh config, or the gh keychain entry.
-        await loadOffMainActor { [authStore] in authStore.loadToken() } != nil
+        if await loadOffMainActor({ [authStore] in authStore.loadToken() }) != nil { return true }
+        return await piUsageScanner.hasUsage(cardID: provider.id)
     }
-
+    
     func refresh() async -> ProviderSnapshot {
+        let snapshot = await refreshNative()
+        let refreshedAt = now()
+        let scan = await piUsageScanner.scan(cardID: provider.id, now: refreshedAt, pricing: await pricing())
+        return PiUsageHistory.appending(
+            scan, to: snapshot, sourceNote: "From your pi sessions (estimated)", now: refreshedAt
+        )
+    }
+    
+    private func refreshNative() async -> ProviderSnapshot {
         let token = await loadOffMainActor { [authStore] in authStore.loadToken() }
         guard let token else {
             return ProviderSnapshot.error(provider: provider, error: CopilotAuthError.notLoggedIn)
         }
-
+        
         do {
             let response = try await usageClient.fetchUsage(token: token.value)
-
+            
             if response.statusCode == 401 || response.statusCode == 403 {
                 return ProviderSnapshot.error(provider: provider, error: CopilotAuthError.tokenInvalid)
             }
             guard (200..<300).contains(response.statusCode) else {
                 return ProviderSnapshot.error(provider: provider, error: CopilotUsageError.requestFailed(response.statusCode))
             }
-
+            
             let mapped = try CopilotUsageMapper.map(response)
-
+            
             // An org-managed (token-based-billing) seat has no per-seat percent meter, so the real
             // usage lives in the org's billing. Look it up there — best-effort: an org admin sees
             // Org Credits / Org Spend, everyone else keeps the plan-only card as before. Gated on
@@ -86,7 +108,7 @@ final class CopilotProvider: ProviderRuntime {
             if mapped.isOrgManagedSeat {
                 lines += await orgBillingLines(token: token.value)
             }
-
+            
             return ProviderSnapshot.make(provider: provider, plan: mapped.plan, lines: lines, refreshedAt: now())
         } catch let error as CopilotUsageError {
             return ProviderSnapshot.error(provider: provider, error: error)
@@ -94,9 +116,9 @@ final class CopilotProvider: ProviderRuntime {
             return ProviderSnapshot.error(provider: provider, error: CopilotUsageError.connectionFailed)
         }
     }
-
+    
     // MARK: - Org billing lookup
-
+    
     /// Org-level Copilot billing lines for an org-managed seat. Tries the cached org first, then probes
     /// every org the user belongs to, remembering the first whose billing summary carries Copilot credit
     /// usage. Returns `[]` when nothing is readable — a 403 is the *expected* outcome for a plain org
@@ -117,7 +139,7 @@ final class CopilotProvider: ProviderRuntime {
                 return []
             }
         }
-
+        
         let orgs: [String]
         do {
             let response = try await orgBillingClient.fetchUserOrgs(token: token)
@@ -132,7 +154,7 @@ final class CopilotProvider: ProviderRuntime {
             AppLog.warn(LogTag.plugin("copilot"), "org list fetch failed: \(error.localizedDescription)")
             return []
         }
-
+        
         for org in orgs {
             do {
                 if let lines = try await usageLines(org: org, token: token) {
@@ -146,7 +168,7 @@ final class CopilotProvider: ProviderRuntime {
         }
         return []
     }
-
+    
     /// One org's billing summary → metric lines, or `nil` when this org definitively has nothing to show
     /// (no access — the expected 403 for plain members — or no Copilot credit usage in the summary).
     /// Throws for transient failures (transport errors, 429, 5xx) so callers keep the cached org instead

@@ -6,6 +6,11 @@ How OpenUsage decides which providers start on, what happens when an update adds
 
 A fresh install doesn't turn on every provider OpenUsage knows about. It starts with Claude, Codex, and Cursor, then quickly checks which providers have credentials available on your Mac — an existing local login, saved API key, or supported environment variable; nothing is sent anywhere — and switches to exactly that set. All providers are checked at once, so detection takes as long as the slowest single check, not the sum of them. If nothing is found, the Claude/Codex/Cursor starter set stays. Providers the check turns on are fetched right away, so they appear with data instead of waiting for the next scheduled refresh. See [Dashboard § First launch](dashboard.md#first-launch) for how the dashboard presents this.
 
+Supported [Pi session logs](providers/pi.md) also count as a local footprint for providers whose
+history consumes them, even without a native login. This enables local spending, not access to live
+subscription limits. Copilot, Ollama, and Z.ai's new Pi history metrics start disabled and must be
+enabled separately in Customize. Adding Pi support does not re-enable a provider you already turned off.
+
 ## When an update adds a new provider
 
 The same detection runs for providers that arrive later. On the first launch after an update, OpenUsage compares the providers it now ships with the ones this install has seen before. For each brand-new one, it runs the same local-only credential check:
@@ -27,6 +32,6 @@ The app persists three small lists in its settings:
 
 - **Enabled providers** — the providers currently on. This is the source of truth the dashboard and menu bar read.
 - **Known providers** — every provider this install has ever seen. This is what makes "new in this update" distinguishable from "you turned it off": a provider missing from the enabled list but present in the known list is a deliberate choice, and is left alone. Only providers missing from *both* get the credential check, and each is marked known immediately so the check never repeats.
-- Each provider implements a cheap, local-only credential probe (`hasLocalCredentials()`) — the same files, keychain entries, saved keys, and environment variables its normal refresh reads, never the network.
+- Each provider implements a cheap, local-only credential probe (`hasLocalCredentials()`) — the same files, keychain entries, saved keys, environment variables, and supported local usage logs its normal refresh reads, never the network.
 
 Older installs (from before first-run detection existed) started with every provider on and stored only the ones turned *off*. A one-time settings migration converts them to the lists above with the exact same providers on and off as before — nothing visibly changes on the launch that migrates; those installs simply join the same new-provider detection from then on.

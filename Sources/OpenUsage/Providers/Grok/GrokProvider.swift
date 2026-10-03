@@ -10,27 +10,30 @@ final class GrokProvider: ProviderRuntime {
             .init(label: "Usage", url: "https://grok.com/?_s=usage")
         ]
     )
-
+    
     let authStore: GrokAuthStore
     let usageClient: GrokUsageClient
     let logUsageScanner: GrokLogUsageScanner
+    let piUsageScanner: PiUsageScanner
     let now: @Sendable () -> Date
     let pricing: @Sendable () async -> ModelPricing
-
+    
     init(
         authStore: GrokAuthStore = GrokAuthStore(),
         usageClient: GrokUsageClient = GrokUsageClient(),
         logUsageScanner: GrokLogUsageScanner = GrokLogUsageScanner(),
+        piUsageScanner: PiUsageScanner = .shared,
         now: @escaping @Sendable () -> Date = Date.init,
         pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
         self.authStore = authStore
         self.usageClient = usageClient
         self.logUsageScanner = logUsageScanner
+        self.piUsageScanner = piUsageScanner
         self.now = now
         self.pricing = pricing
     }
-
+    
     var widgetDescriptors: [WidgetDescriptor] {
         [
             .percent(id: "grok.weekly", provider: provider, title: "Weekly", metricLabel: "Weekly limit")
@@ -40,31 +43,55 @@ final class GrokProvider: ProviderRuntime {
                 .exportingHistory(
                     scope: .machineLocal,
                     estimatedCost: true,
-                    sourceNote: "From your Grok logs (estimated)"
+                    sourceNote: "From your Grok and Pi logs (estimated)"
                 )
             // Local spend tiles from completed turns in the Grok CLI's session transcripts.
         ] + WidgetDescriptor.spendTiles(provider: provider)
     }
-
+    
     func hasLocalCredentials() async -> Bool {
         // Same source as `refresh()`: ~/.grok/auth.json with at least one keyed entry.
-        await loadOffMainActor { [authStore] in
+        let hasNativeCredentials = await loadOffMainActor { [authStore] in
             ((try? authStore.loadAuthCandidates()) ?? []).isEmpty == false
         }
+        if hasNativeCredentials { return true }
+        return await piUsageScanner.hasUsage(cardID: provider.id)
     }
-
+    
     func refresh() async -> ProviderSnapshot {
+        let snapshot = await refreshNative()
+        let refreshedAt = now()
+        let modelPricing = await pricing()
+        let piScan = await piUsageScanner.scan(
+            cardID: provider.id, now: refreshedAt, pricing: modelPricing
+        )
+        // A quota failure must not replace intact local history with only Pi's smaller slice.
+        let nativeScan: LogUsageScan?
+        if snapshot.errorCategory != nil {
+            nativeScan = await logUsageScanner.scan(daysBack: 30, now: refreshedAt, pricing: modelPricing)
+        } else {
+            nativeScan = nil
+        }
+        let localScan = DailyUsageAccumulator.merged([nativeScan, piScan])
+        return PiUsageHistory.appending(
+            localScan, to: snapshot,
+            sourceNote: piScan == nil ? "From your Grok logs (estimated)" : "From your Grok and Pi logs (estimated)",
+            now: refreshedAt
+        )
+    }
+    
+    private func refreshNative() async -> ProviderSnapshot {
         do {
             return try await loadAndProbe()
         } catch {
             return ProviderSnapshot.error(provider: provider, error: error)
         }
     }
-
+    
     private func loadAndProbe() async throws -> ProviderSnapshot {
         let candidates = try authStore.loadAuthCandidates()
         var sawExpiredCandidate = false
-
+        
         for var state in candidates {
             if authStore.needsRefresh(entry: state.entry, token: state.token) {
                 if let refreshed = await refreshAccessToken(state: &state) {
@@ -77,13 +104,13 @@ final class GrokProvider: ProviderRuntime {
             }
             return try await probe(state: &state, accessToken: state.token)
         }
-
+        
         if sawExpiredCandidate {
             throw GrokAuthError.expired
         }
         throw GrokAuthError.invalidAuth
     }
-
+    
     private func probe(state: inout GrokAuthState, accessToken: String) async throws -> ProviderSnapshot {
         // The weekly shared-pool meter and pay-as-you-go badge come from the billing endpoint with
         // `?format=credits` — the call the Grok CLI itself makes. This is the provider's primary
@@ -104,9 +131,9 @@ final class GrokProvider: ProviderRuntime {
         } else {
             mapped = try GrokUsageMapper.mapCreditsConfig(creditsResponse)
         }
-
+        
         let plan = await fetchPlanName(accessToken: state.token)
-
+        
         // Local spend tiles from completed session turns. Recorded Grok costs win when available;
         // older turns without a carried cost use the shared pricing store.
         var usageHistory: ProviderUsageHistory?
@@ -127,7 +154,7 @@ final class GrokProvider: ProviderRuntime {
             SpendTileMapper.appendUsageTrend(scan.series, to: &mapped.lines, now: now(),
                                              note: "From your Grok logs (estimated)")
         }
-
+        
         return ProviderSnapshot.make(
             provider: provider,
             plan: plan,
@@ -137,7 +164,7 @@ final class GrokProvider: ProviderRuntime {
             warning: warning
         )
     }
-
+    
     private func fetchCreditsConfigWithRetry(accessToken: String, state: inout GrokAuthState) async throws -> HTTPResponse {
         var working = state
         defer { state = working }
@@ -154,12 +181,12 @@ final class GrokProvider: ProviderRuntime {
             authExpired: GrokAuthError.expired
         )
     }
-
+    
     private func refreshAccessToken(state: inout GrokAuthState) async -> String? {
         guard let refreshToken = authStore.refreshToken(for: state.entry) else {
             return nil
         }
-
+        
         let response: HTTPResponse
         do {
             response = try await usageClient.refreshToken(
@@ -175,7 +202,7 @@ final class GrokProvider: ProviderRuntime {
             AppLog.warn(LogTag.auth("grok"), "token refresh request failed (transport): \(error.localizedDescription)")
             return nil
         }
-
+        
         guard (200..<300).contains(response.statusCode) else {
             AppLog.warn(LogTag.auth("grok"), "token refresh failed (HTTP \(response.statusCode))")
             return nil
@@ -186,7 +213,7 @@ final class GrokProvider: ProviderRuntime {
             AppLog.warn(LogTag.auth("grok"), "token refresh returned an undecodable or empty access token")
             return nil
         }
-
+        
         let accessToken = decoded.accessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         state.token = accessToken
         state.entry.key = accessToken
@@ -196,7 +223,7 @@ final class GrokProvider: ProviderRuntime {
         if let idToken = decoded.idToken?.trimmingCharacters(in: .whitespacesAndNewlines), !idToken.isEmpty {
             state.entry.idToken = idToken
         }
-
+        
         let expiresAt = refreshExpiryDate(response: decoded, accessToken: accessToken)
         state.entry.expiresAt = OpenUsageISO8601.string(from: expiresAt)
         // Fail loudly: a swallowed save strands the rotated token on disk (next launch re-refreshes /
@@ -209,7 +236,7 @@ final class GrokProvider: ProviderRuntime {
         }
         return accessToken
     }
-
+    
     private func refreshExpiryDate(response: GrokRefreshResponse, accessToken: String) -> Date {
         if let expiresIn = response.expiresIn, expiresIn.isFinite, expiresIn > 0 {
             return now().addingTimeInterval(expiresIn)
@@ -219,7 +246,7 @@ final class GrokProvider: ProviderRuntime {
         }
         return now().addingTimeInterval(60 * 60)
     }
-
+    
     private func fetchPlanName(accessToken: String) async -> String? {
         do {
             return GrokUsageMapper.planName(from: try await usageClient.fetchSettings(accessToken: accessToken))

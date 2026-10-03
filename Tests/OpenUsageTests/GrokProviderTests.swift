@@ -8,9 +8,9 @@ final class GrokProviderTests: XCTestCase {
             HTTPResponse(statusCode: 200, headers: [:], body: Data())
         }
         let client = GrokUsageClient(httpClient: httpClient)
-
+        
         _ = try await client.refreshToken("refresh token&=+/?%", clientID: "client id&=+/?%")
-
+        
         let request = try XCTUnwrap(httpClient.requests.first)
         XCTAssertEqual(request.method, "POST")
         XCTAssertEqual(request.headers["Content-Type"], "application/x-www-form-urlencoded")
@@ -20,7 +20,7 @@ final class GrokProviderTests: XCTestCase {
                 "&refresh_token=refresh%20token%26%3D%2B%2F%3F%25"
         )
     }
-
+    
     func testRefreshesExpiredTokenPersistsAuthAndFetchesUsage() async {
         let now = OpenUsageISO8601.date(from: "2026-02-02T00:00:00.000Z")!
         let files = FakeFiles([
@@ -61,16 +61,17 @@ final class GrokProviderTests: XCTestCase {
             authStore: GrokAuthStore(files: files, now: { now }),
             usageClient: GrokUsageClient(httpClient: httpClient),
             logUsageScanner: noLogScanner(),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
-
+        
         let snapshot = await provider.refresh()
-
+        
         XCTAssertEqual(snapshot.plan, "SuperGrok Heavy")
         XCTAssertEqual(progress(snapshot.lines, "Weekly limit")?.used, 99)
         XCTAssertEqual(badge(snapshot.lines, "Pay as you go")?.text, "Disabled")
-
+        
         let saved = GrokAuthStore.parseAuth(files.files[GrokAuthStore.authPath] ?? "")
         let entry = saved?["https://auth.x.ai::client"]
         XCTAssertEqual(entry?.key, "new-token")
@@ -80,7 +81,7 @@ final class GrokProviderTests: XCTestCase {
         let rawEntry = savedObject?["https://auth.x.ai::client"] as? [String: Any]
         XCTAssertEqual(rawEntry?["custom_field"] as? String, "keep-me")
     }
-
+    
     func testRetriesCreditsOnceAfterAuthError() async {
         let now = OpenUsageISO8601.date(from: "2026-02-02T00:00:00.000Z")!
         let files = FakeFiles([
@@ -119,12 +120,13 @@ final class GrokProviderTests: XCTestCase {
             authStore: GrokAuthStore(files: files, now: { now }),
             usageClient: GrokUsageClient(httpClient: httpClient),
             logUsageScanner: noLogScanner(),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
-
+        
         let snapshot = await provider.refresh()
-
+        
         XCTAssertEqual(snapshot.plan, "SuperGrok Heavy")
         let creditsAuths = httpClient.requests
             .filter { $0.url == GrokUsageClient.creditsConfigURL }
@@ -132,7 +134,7 @@ final class GrokProviderTests: XCTestCase {
         XCTAssertEqual(creditsAuths, ["Bearer old-token", "Bearer new-token"])
         XCTAssertEqual(progress(snapshot.lines, "Weekly limit")?.used, 99)
     }
-
+    
     func testWeeklyMeterAndPayAsYouGoComeFromCreditsConfig() async {
         let httpClient = RecordingHTTPClient { request in
             if request.url == GrokUsageClient.creditsConfigURL {
@@ -147,9 +149,9 @@ final class GrokProviderTests: XCTestCase {
             return Self.defaultRoutes(request)
         }
         let provider = makeProvider(httpClient: httpClient)
-
+        
         let snapshot = await provider.refresh()
-
+        
         XCTAssertEqual(progress(snapshot.lines, "Weekly limit")?.used, 99)
         XCTAssertEqual(progress(snapshot.lines, "Weekly limit")?.limit, 100)
         XCTAssertEqual(progress(snapshot.lines, "Weekly limit")?.resetsAt?.timeIntervalSince1970 ?? 0,
@@ -157,10 +159,10 @@ final class GrokProviderTests: XCTestCase {
         XCTAssertEqual(badge(snapshot.lines, "Pay as you go")?.text, "Disabled")
         XCTAssertNil(snapshot.warning)
     }
-
+    
     func testCreditsTransportAndSchemaFailuresFailTheProvider() async {
         let cases = [(503, ""), (200, #"{"config":{}}"#)]
-
+        
         for (status, body) in cases {
             let httpClient = RecordingHTTPClient { request in
                 if request.url == GrokUsageClient.creditsConfigURL {
@@ -168,14 +170,14 @@ final class GrokProviderTests: XCTestCase {
                 }
                 return Self.defaultRoutes(request)
             }
-
+            
             let snapshot = await makeProvider(httpClient: httpClient).refresh()
-
+            
             XCTAssertNotNil(snapshot.errorCategory)
             XCTAssertNil(progress(snapshot.lines, "Weekly limit"))
         }
     }
-
+    
     func testTeamBilling412KeepsPlanAndLocalSpend() async throws {
         // SuperGrok Business / team principals 412 the credits endpoint with "No personal team."
         // Auth and settings still work; blanking the whole card also hid local spend tiles.
@@ -204,9 +206,9 @@ final class GrokProviderTests: XCTestCase {
             scanner: GrokLogFixture.scanner(home: home),
             now: now
         )
-
+        
         let snapshot = await provider.refresh()
-
+        
         XCTAssertNil(snapshot.errorCategory)
         XCTAssertEqual(snapshot.plan, "SuperGrok Heavy")
         XCTAssertEqual(snapshot.warning, GrokUsageMapper.teamBillingUnavailableWarning)
@@ -217,7 +219,7 @@ final class GrokProviderTests: XCTestCase {
             [MetricValue(number: 1.0, kind: .dollars, estimated: true), MetricValue(number: 1_000_000, kind: .count, label: "tokens")]
         )
     }
-
+    
     func testUnrelated412StillFailsTheProvider() async {
         let httpClient = RecordingHTTPClient { request in
             if request.url == GrokUsageClient.creditsConfigURL {
@@ -229,14 +231,14 @@ final class GrokProviderTests: XCTestCase {
             }
             return Self.defaultRoutes(request)
         }
-
+        
         let snapshot = await makeProvider(httpClient: httpClient).refresh()
-
+        
         XCTAssertEqual(snapshot.errorCategory, .http4xx)
         XCTAssertNil(progress(snapshot.lines, "Weekly limit"))
         XCTAssertNil(snapshot.warning)
     }
-
+    
     func testIsTeamBillingUnavailableMatchesLive412BodyOnly() {
         let live = HTTPResponse(
             statusCode: 412,
@@ -244,13 +246,13 @@ final class GrokProviderTests: XCTestCase {
             body: Data(#"{"code":"The system is not in a state required for the operation's execution","error":"resolve_personal_team_id(), No personal team."}"#.utf8)
         )
         XCTAssertTrue(GrokUsageMapper.isTeamBillingUnavailable(live))
-
+        
         let other412 = HTTPResponse(statusCode: 412, headers: [:], body: Data(#"{"error":"precondition failed"}"#.utf8))
         XCTAssertFalse(GrokUsageMapper.isTeamBillingUnavailable(other412))
-
+        
         let ok = HTTPResponse(statusCode: 200, headers: [:], body: Data(#"{"error":"No personal team."}"#.utf8))
         XCTAssertFalse(GrokUsageMapper.isTeamBillingUnavailable(ok))
-
+        
         // Phrase only in `code`, not `error` — not the team-principal signal.
         let codeOnly = HTTPResponse(
             statusCode: 412,
@@ -258,11 +260,11 @@ final class GrokProviderTests: XCTestCase {
             body: Data(#"{"code":"No personal team.","error":"precondition failed"}"#.utf8)
         )
         XCTAssertFalse(GrokUsageMapper.isTeamBillingUnavailable(codeOnly))
-
+        
         let notJSON = HTTPResponse(statusCode: 412, headers: [:], body: Data("No personal team.".utf8))
         XCTAssertFalse(GrokUsageMapper.isTeamBillingUnavailable(notJSON))
     }
-
+    
     func testNonWeeklyPeriodShowsNoWeeklyLineAndNoWarning() async {
         // A not-yet-migrated (monthly-period) account is a valid state, not a failure: the Weekly
         // tile reads "No data" without the amber triangle, and the badge still renders.
@@ -274,15 +276,15 @@ final class GrokProviderTests: XCTestCase {
             return Self.defaultRoutes(request)
         }
         let provider = makeProvider(httpClient: httpClient)
-
+        
         let snapshot = await provider.refresh()
-
+        
         XCTAssertNil(progress(snapshot.lines, "Weekly limit"))
         XCTAssertEqual(badge(snapshot.lines, "Pay as you go")?.text, "Disabled")
         XCTAssertNil(snapshot.warning)
         XCTAssertNil(snapshot.errorCategory)
     }
-
+    
     func testRefreshAppendsLocalSpendTilesFromSessions() async throws {
         let now = OpenUsageISO8601.date(from: "2026-06-18T12:00:00.000Z")!
         let home = try GrokLogFixture.makeHome(files: [
@@ -303,9 +305,9 @@ final class GrokProviderTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: home) }
         let scanner = GrokLogFixture.scanner(home: home)
         let provider = makeProvider(httpClient: RecordingHTTPClient(handler: Self.defaultRoutes), scanner: scanner, now: now)
-
+        
         let snapshot = await provider.refresh()
-
+        
         // Existing credit lines stay; the three spend tiles use Grok's recorded session costs.
         XCTAssertEqual(progress(snapshot.lines, "Weekly limit")?.used, 99)
         XCTAssertEqual(values(snapshot.lines, "Today"),
@@ -314,7 +316,7 @@ final class GrokProviderTests: XCTestCase {
                        [MetricValue(number: 15.0, kind: .dollars, estimated: true), MetricValue(number: 1_000_000, kind: .count, label: "tokens")])
         XCTAssertEqual(values(snapshot.lines, "Last 30 Days"),
                        [MetricValue(number: 16.0, kind: .dollars, estimated: true), MetricValue(number: 2_000_000, kind: .count, label: "tokens")])
-
+        
         guard case .chart(_, let points, let note) = snapshot.lines.first(where: { $0.label == "Usage Trend" }) else {
             return XCTFail("expected a Usage Trend chart line")
         }
@@ -323,7 +325,7 @@ final class GrokProviderTests: XCTestCase {
         XCTAssertEqual(points.last?.value, 1_000_000)
         XCTAssertEqual(points[29].value, 1_000_000)
     }
-
+    
     func testPeriodWithoutUsageLeavesTileUnbacked() async throws {
         // Regression for the reported "Today 0" bug: a session has yesterday's usage, but no
         // turn completed today. An idle today is "No data" (no backing line), never a fabricated
@@ -342,22 +344,22 @@ final class GrokProviderTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: home) }
         let scanner = GrokLogFixture.scanner(home: home)
         let provider = makeProvider(httpClient: RecordingHTTPClient(handler: Self.defaultRoutes), scanner: scanner, now: now)
-
+        
         let snapshot = await provider.refresh()
-
+        
         // No usage today → "No data" (no Today line). Yesterday and the 30-day total still render.
         XCTAssertNil(values(snapshot.lines, "Today"))
         XCTAssertNotNil(values(snapshot.lines, "Yesterday"))
         XCTAssertNotNil(values(snapshot.lines, "Last 30 Days"))
     }
-
+    
     func testRefreshWithoutSessionsAppendsNoUsageTrend() async {
         let provider = makeProvider(httpClient: RecordingHTTPClient(handler: Self.defaultRoutes))
-
+        
         let snapshot = await provider.refresh()
         XCTAssertNil(snapshot.lines.first(where: { $0.label == "Usage Trend" }), "no sessions means no trend chart")
     }
-
+    
     /// The stock happy-path routes: the captured weekly credits config and the plan name.
     private static func defaultRoutes(_ request: HTTPRequest) -> HTTPResponse {
         if request.url == GrokUsageClient.creditsConfigURL {
@@ -368,7 +370,7 @@ final class GrokProviderTests: XCTestCase {
         }
         return HTTPResponse(statusCode: 404, headers: [:], body: Data())
     }
-
+    
     private func makeProvider(
         httpClient: RecordingHTTPClient,
         scanner: GrokLogUsageScanner? = nil,
@@ -381,15 +383,16 @@ final class GrokProviderTests: XCTestCase {
             authStore: GrokAuthStore(files: files, now: { now }),
             usageClient: GrokUsageClient(httpClient: httpClient),
             logUsageScanner: scanner ?? noLogScanner(),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
     }
-
+    
     private func noLogScanner() -> GrokLogUsageScanner {
         GrokLogFixture.scanner(home: nil)
     }
-
+    
     private func values(_ lines: [MetricLine], _ label: String) -> [MetricValue]? {
         guard case .values(_, let values, _, _, _, _) = lines.first(where: { $0.label == label }) else { return nil }
         return values
@@ -416,9 +419,9 @@ final class GrokWidgetDataStoreTests: XCTestCase {
             )
         )
         let store = WidgetDataStore(registry: WidgetRegistry(providers: [provider], descriptors: [descriptor]), providers: [runtime])
-
+        
         await store.refreshAll()
-
+        
         XCTAssertEqual(store.data(for: descriptor).valueText, "2500 cap")
     }
 }
@@ -426,11 +429,11 @@ final class GrokWidgetDataStoreTests: XCTestCase {
 private final class RecordingHTTPClient: HTTPClient, @unchecked Sendable {
     var requests: [HTTPRequest] = []
     private let handler: (HTTPRequest) throws -> HTTPResponse
-
+    
     init(handler: @escaping (HTTPRequest) throws -> HTTPResponse) {
         self.handler = handler
     }
-
+    
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         requests.append(request)
         return try handler(request)

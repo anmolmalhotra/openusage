@@ -12,6 +12,14 @@ Tracks [Z.ai](https://z.ai) (Zhipu AI) GLM Coding Plan usage quotas for coding s
 
 When Z.ai reports your plan name, OpenUsage shows it beside the provider name.
 
+## Pi Usage History
+
+[Pi sessions](pi.md) recorded with provider `zai` contribute local Usage Trend, Today,
+Yesterday, and Last 30 Days metrics. All four start disabled; enable them in Customize. These
+figures cover Pi activity only, separate from the service's live quota or billing metrics.
+Local history remains available without a native login or after a failed live request, with a
+warning explaining the unavailable meters. Pi logs do not supply credentials for those meters.
+
 ## Where credentials come from
 
 Z.ai has no companion CLI/app that OpenUsage can reuse a credential from, so you supply an API key.

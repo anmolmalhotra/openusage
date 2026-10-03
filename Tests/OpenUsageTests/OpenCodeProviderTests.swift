@@ -7,11 +7,11 @@ import XCTest
 final class OpenCodeProviderTests: XCTestCase {
     private let authJSON = #"{"opencode-go":{"type":"api","key":"sk-test"}}"#
     private let now = OpenUsageISO8601.date(from: "2026-07-12T12:00:00.000Z")!
-
+    
     private func authStore(files: TextFileAccessing) -> OpenCodeAuthStore {
         openCodeAuthStore(files: files)
     }
-
+    
     private func usageJSON(rolling: Int = 12, weekly: Int = 8, monthly: Int = 35) -> Data {
         let body: [String: Any] = [
             "usage": [
@@ -22,13 +22,13 @@ final class OpenCodeProviderTests: XCTestCase {
         ]
         return try! JSONSerialization.data(withJSONObject: body)
     }
-
+    
     private func okClient() -> OpenCodeUsageClient {
         OpenCodeUsageClient(http: FakeHTTPClient(response: HTTPResponse(
             statusCode: 200, headers: [:], body: usageJSON()
         )))
     }
-
+    
     private func provider(
         files: TextFileAccessing,
         scanner: OpenCodeUsageScanner,
@@ -39,10 +39,11 @@ final class OpenCodeProviderTests: XCTestCase {
             authStore: authStore(files: files),
             usageClient: client ?? okClient(),
             usageScanner: scanner,
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now }
         )
     }
-
+    
     func testHasLocalCredentialsViaGoAuthKey() async {
         let provider = provider(
             files: FakeFiles(["/oc/auth.json": authJSON]),
@@ -51,7 +52,7 @@ final class OpenCodeProviderTests: XCTestCase {
         let has = await provider.hasLocalCredentials()
         XCTAssertTrue(has)
     }
-
+    
     func testHasLocalCredentialsViaLocalUsageButNotForEmptyDatabase() async {
         func probe(db: String) async -> Bool {
             await provider(
@@ -62,13 +63,13 @@ final class OpenCodeProviderTests: XCTestCase {
                 )
             ).hasLocalCredentials()
         }
-
+        
         let withUsage = await probe(db: "[" + openCodeRow("2026-07-12T10:00:00.000Z", "1.0", 500, "gpt-5.5", "opencode") + "]")
         XCTAssertTrue(withUsage)
         let empty = await probe(db: "[]")
         XCTAssertFalse(empty)
     }
-
+    
     func testRefreshProducesMetersTilesAndTrend() async {
         let db = "[" + [
             openCodeRow("2026-07-12T11:00:00.000Z", "2.0", 1000, "glm-5.2", "opencode-go"),
@@ -83,13 +84,13 @@ final class OpenCodeProviderTests: XCTestCase {
             ),
             client: OpenCodeUsageClient(http: http)
         ).refresh()
-
+        
         XCTAssertEqual(snapshot.plan, "Go")
         XCTAssertNil(snapshot.errorCategory)
         XCTAssertEqual(http.requests.count, 1)
         XCTAssertEqual(http.requests.first?.url, OpenCodeUsageClient.usageURL)
         XCTAssertEqual(http.requests.first?.headers["Authorization"], "Bearer sk-test")
-
+        
         guard case let .progress(_, used, limit, format, _, _, _)? = snapshot.line(label: "Session") else {
             return XCTFail("expected a Session meter")
         }
@@ -101,7 +102,7 @@ final class OpenCodeProviderTests: XCTestCase {
         XCTAssertNotNil(snapshot.line(label: "Usage Trend"))
         XCTAssertNotNil(snapshot.line(label: "Today"))
     }
-
+    
     func testNewSubOnePercentSessionRendersCountdownThroughProviderAndStore() async throws {
         // A session that just started still reads 0% (whole-percent API), but its rolling reset has
         // already moved inside the five-hour window. Through the full provider → store → widget-data
@@ -139,9 +140,9 @@ final class OpenCodeProviderTests: XCTestCase {
             defaults: defaults,
             now: { fixedNow }
         )
-
+        
         await store.refreshAll(force: true)
-
+        
         let descriptor = try XCTUnwrap(descriptors.first { $0.id == "opencode.session" })
         let data = store.data(for: descriptor)
         XCTAssertEqual(data.used, 0)
@@ -149,7 +150,7 @@ final class OpenCodeProviderTests: XCTestCase {
         XCTAssertFalse(data.isFreshSessionWindow(now: fixedNow))
         XCTAssertEqual(data.boundedTrailingText(now: fixedNow)?.hasPrefix("Resets in"), true)
     }
-
+    
     func testUntouchedSessionRendersNotStartedThroughProviderAndStore() async throws {
         // An untouched session returns a placeholder reset around now + 5h.
         // Through the full provider → store → widget-data path, the Session row
@@ -187,9 +188,9 @@ final class OpenCodeProviderTests: XCTestCase {
             defaults: defaults,
             now: { fixedNow }
         )
-
+        
         await store.refreshAll(force: true)
-
+        
         let descriptor = try XCTUnwrap(descriptors.first { $0.id == "opencode.session" })
         let data = store.data(for: descriptor)
         XCTAssertEqual(data.used, 0)
@@ -197,7 +198,7 @@ final class OpenCodeProviderTests: XCTestCase {
         XCTAssertTrue(data.isFreshSessionWindow(now: fixedNow))
         XCTAssertEqual(data.boundedTrailingText(now: fixedNow), "Not started")
     }
-
+    
     func testRefreshNotLoggedInWhenNoKeyAndNoDatabase() async {
         let snapshot = await provider(
             files: FakeFiles(),
@@ -205,7 +206,7 @@ final class OpenCodeProviderTests: XCTestCase {
         ).refresh()
         XCTAssertEqual(snapshot.errorCategory, .notLoggedIn)
     }
-
+    
     func testRefreshShowsAPIMetersWithGoKeyButNoDatabase() async {
         let snapshot = await provider(
             files: FakeFiles(["/oc/auth.json": authJSON]),
@@ -216,7 +217,7 @@ final class OpenCodeProviderTests: XCTestCase {
         XCTAssertNotNil(snapshot.line(label: "Session"))
         XCTAssertNil(snapshot.line(label: "Today"))
     }
-
+    
     func testRefreshKeepsGoMetersWhenDatabasesUnreadable() async {
         let snapshot = await provider(
             files: FakeFiles(["/oc/auth.json": authJSON]),
@@ -230,7 +231,7 @@ final class OpenCodeProviderTests: XCTestCase {
         XCTAssertNotNil(snapshot.line(label: "Session"))
         XCTAssertNil(snapshot.line(label: "Today"))
     }
-
+    
     func testRefreshErrorsWhenDatabasesUnreadableWithoutGoKey() async {
         let snapshot = await provider(
             files: FakeFiles(),
@@ -242,7 +243,7 @@ final class OpenCodeProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.errorCategory, .credentialAccess)
         XCTAssertNil(snapshot.line(label: "Session"))
     }
-
+    
     func testRefreshSurfacesUnreadableAuthFileInsteadOfNotLoggedIn() async {
         let snapshot = await provider(
             files: UnreadableFiles(present: ["/oc/auth.json"]),
@@ -250,7 +251,7 @@ final class OpenCodeProviderTests: XCTestCase {
         ).refresh()
         XCTAssertEqual(snapshot.errorCategory, .credentialAccess)
     }
-
+    
     func testHasLocalCredentialsTrueWhenAuthFileUnreadable() async {
         let provider = provider(
             files: UnreadableFiles(present: ["/oc/auth.json"]),
@@ -259,7 +260,7 @@ final class OpenCodeProviderTests: XCTestCase {
         let has = await provider.hasLocalCredentials()
         XCTAssertTrue(has)
     }
-
+    
     func testSpendTilesAreNotMarkedEstimated() async {
         let db = "[" + openCodeRow("2026-07-12T10:00:00.000Z", "1.0", 500, "gpt-5.5", "opencode") + "]"
         let snapshot = await provider(
@@ -276,7 +277,7 @@ final class OpenCodeProviderTests: XCTestCase {
         XCTAssertNil(snapshot.plan)
         XCTAssertNil(snapshot.line(label: "Session"))
     }
-
+    
     func testUnauthorizedKeyFailsLoudly() async {
         let snapshot = await provider(
             files: FakeFiles(["/oc/auth.json": authJSON]),
@@ -289,7 +290,7 @@ final class OpenCodeProviderTests: XCTestCase {
         ).refresh()
         XCTAssertEqual(snapshot.errorCategory, .authExpired)
     }
-
+    
     func testEntitlementErrorWithoutLocalUsageIsNoGoSubscription() async {
         let snapshot = await provider(
             files: FakeFiles(["/oc/auth.json": authJSON]),
@@ -302,7 +303,7 @@ final class OpenCodeProviderTests: XCTestCase {
         ).refresh()
         XCTAssertEqual(snapshot.errorCategory, .notAvailable)
     }
-
+    
     func testEntitlementErrorWithZenUsageShowsTilesWithoutGoMeters() async {
         let db = "[" + openCodeRow("2026-07-12T10:00:00.000Z", "1.0", 500, "gpt-5.5", "opencode") + "]"
         let snapshot = await provider(
@@ -322,7 +323,7 @@ final class OpenCodeProviderTests: XCTestCase {
         XCTAssertNil(snapshot.line(label: "Session"))
         XCTAssertNotNil(snapshot.line(label: "Today"))
     }
-
+    
     func testGeneric403FailsLoudly() async {
         let snapshot = await provider(
             files: FakeFiles(["/oc/auth.json": authJSON]),
@@ -333,7 +334,7 @@ final class OpenCodeProviderTests: XCTestCase {
         ).refresh()
         XCTAssertEqual(snapshot.errorCategory, .http4xx)
     }
-
+    
     func testConnectionFailureFailsLoudly() async {
         let snapshot = await provider(
             files: FakeFiles(["/oc/auth.json": authJSON]),
@@ -342,7 +343,7 @@ final class OpenCodeProviderTests: XCTestCase {
         ).refresh()
         XCTAssertEqual(snapshot.errorCategory, .network)
     }
-
+    
     func testGoMeterFailureKeepsLocalTiles() async {
         let db = "[" + openCodeRow("2026-07-12T10:00:00.000Z", "1.0", 500, "gpt-5.5", "opencode") + "]"
         let unauthorized = HTTPResponse(

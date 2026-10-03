@@ -10,13 +10,13 @@ enum JSONLScanning {
         var size: Int
         var mtime: Date
     }
-
+    
     /// Start of the day `daysBack` days before `now` — the lower bound of the scan window.
     static func sinceDate(daysBack: Int, now: Date) -> Date {
         let shifted = Calendar.current.date(byAdding: .day, value: -daysBack, to: now) ?? now
         return Calendar.current.startOfDay(for: shifted)
     }
-
+    
     /// Every `*.jsonl` regular file under `dir` (recursively), path-sorted so a keep-first dedup is
     /// deterministic. Empty when `dir` can't be enumerated.
     static func jsonlFiles(under dir: URL) -> [DiscoveredFile] {
@@ -54,12 +54,12 @@ enum JSONLScanning {
 /// main actor. Provider scanner instances share one actor per parser; `Item` is that parser's row.
 actor IncrementalJSONLScanner<Item: Codable & Sendable> {
     private typealias CachedFile = JSONLScanCachedFile<Item>
-
+    
     private struct IdentityWaiter {
         var id: UUID
         var continuation: CheckedContinuation<Bool, Never>
     }
-
+    
     /// One in-memory partition per provider/home identity. Provider scanner instances share this actor,
     /// so same-home multi-account cards reuse both memory and disk without letting disjoint homes prune
     /// one another's files.
@@ -78,7 +78,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
     private let parsePermitPool: JSONLParsePermitPool
     private let readFailureReporter: UsageLogReadFailureReporter
     private let persistence: JSONLScanCachePersistence?
-
+    
     init(
         maxConcurrentParses: Int = 8,
         logTag: String = LogTag.refresh.rawValue,
@@ -101,7 +101,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
             }
         }
     }
-
+    
     /// Re-parse the in-window files (reusing the cache on an unchanged path + size + mtime), then return
     /// every file's items concatenated in the input order — callers pass a path-sorted list so a
     /// keep-first dedup stays deterministic. Files whose mtime predates `since` are skipped, so a
@@ -122,20 +122,21 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
             parse: { data, _ in parse(data) }
         )
     }
-
+    
     /// Stateful parsers keep one independent state per file while the reader delivers bounded batches.
     func items<State: Sendable>(
         from files: [JSONLScanning.DiscoveredFile],
         since: Date,
         cacheIdentity: String = "default",
         initialState: State,
+        initialStateForFile: (@Sendable (String) -> State)? = nil,
         parse: @Sendable @escaping (Data, inout State) -> [Item]?
     ) async -> [Item]? {
         precondition(!cacheIdentity.isEmpty)
         guard await acquire(cacheIdentity) else { return nil }
         defer { release(cacheIdentity) }
         guard !Task.isCancelled else { return nil }
-
+        
         await loadCacheIfNeeded(identity: cacheIdentity)
         guard !Task.isCancelled else { return nil }
         let currentCache = caches[cacheIdentity] ?? [:]
@@ -158,6 +159,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
             maxConcurrentParses: maxConcurrentParses,
             permitPool: parsePermitPool,
             initialState: initialState,
+            initialStateForFile: initialStateForFile,
             parse: parse
         )
         guard !Task.isCancelled else { return nil }
@@ -195,7 +197,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
         {
             scheduleWrite(identity: cacheIdentity)
         }
-
+        
         var items: [Item] = []
         for file in files {
             guard let cached = nextCache[file.path] else { continue }
@@ -203,7 +205,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
         }
         return Task.isCancelled ? nil : items
     }
-
+    
     /// Wait for the real debounced tasks rather than bypassing them. Tests configure a tiny debounce,
     /// then use this to prove ordinary scans actually schedule and finish persistence.
     func waitForPendingWritesForTesting() async {
@@ -211,7 +213,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
             await task.value
         }
     }
-
+    
     /// Commits the latest snapshots immediately. One-shot processes call this before exiting; the
     /// long-lived app keeps the ordinary debounced path so refresh latency is unaffected.
     func flushPendingWrites() async {
@@ -229,7 +231,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
             await persistCache(identity: identity, generation: generation)
         }
     }
-
+    
     func cacheRecordURLForTesting(identity: String, filePath: String) -> URL? {
         guard let persistence else { return nil }
         return JSONLScanCachePaths.recordURL(
@@ -238,13 +240,13 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
             fileName: JSONLScanCachePaths.recordFileName(path: filePath)
         )
     }
-
+    
     func queuedScanCountForTesting(identity: String) -> Int {
         identityWaiters[identity]?.count ?? 0
     }
-
+    
     // MARK: - Same-identity scan serialization
-
+    
     /// Actors are reentrant at `await parseFiles`; without this gate two cards launched together can
     /// cold-parse the same home concurrently and then race to replace its cache. Different identities
     /// remain independent, while matching ones queue behind the first parse and immediately hit cache.
@@ -268,7 +270,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
             Task { await self.cancelWaiter(identity: identity, waiterID: waiterID) }
         }
     }
-
+    
     private func cancelWaiter(identity: String, waiterID: UUID) {
         guard var waiters = identityWaiters[identity],
               let index = waiters.firstIndex(where: { $0.id == waiterID })
@@ -277,7 +279,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
         identityWaiters[identity] = waiters.isEmpty ? nil : waiters
         waiter.continuation.resume(returning: false)
     }
-
+    
     private func release(_ identity: String) {
         guard var waiters = identityWaiters[identity], !waiters.isEmpty else {
             activeIdentities.remove(identity)
@@ -288,9 +290,9 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
         identityWaiters[identity] = waiters.isEmpty ? nil : waiters
         next.continuation.resume(returning: true)
     }
-
+    
     // MARK: - Persistence
-
+    
     private func loadCacheIfNeeded(identity: String) async {
         guard loadedIdentities.insert(identity).inserted, let persistence else { return }
         do {
@@ -329,7 +331,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
             )
         }
     }
-
+    
     private func scheduleWrite(identity: String) {
         guard let persistence else { return }
         let generation = writeGenerations[identity, default: 0] + 1
@@ -348,18 +350,18 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
             await self.finishWriteTask(identity: identity, generation: generation)
         }
     }
-
+    
     private func finishWriteTask(identity: String, generation: Int) {
         guard writeGenerations[identity] == generation else { return }
         writeTasks[identity] = nil
     }
-
+    
     private func persistCache(identity: String, generation: Int) async {
         guard let persistence,
               writeGenerations[identity] == generation,
               let files = caches[identity]
         else { return }
-
+        
         let manifestFiles = metadata(for: files)
         let pathsToWrite = dirtyUpsertPaths[identity, default: []]
         let records = pathsToWrite.compactMap {
@@ -417,7 +419,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
             )
         }
     }
-
+    
     private func metadata(for files: [String: CachedFile]) -> [String: JSONLScanCacheFileMetadata] {
         var result: [String: JSONLScanCacheFileMetadata] = [:]
         result.reserveCapacity(files.count)
@@ -430,7 +432,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
         }
         return result
     }
-
+    
     /// Read + parse a bounded number of changed files in parallel. Results are keyed back to the input
     /// order; a `nil` item list marks an unreadable file.
     private static func parseFiles<State: Sendable>(
@@ -438,6 +440,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
         maxConcurrentParses: Int,
         permitPool: JSONLParsePermitPool,
         initialState: State,
+        initialStateForFile: (@Sendable (String) -> State)? = nil,
         parse: @Sendable @escaping (Data, inout State) -> [Item]?
     ) async -> [(file: JSONLScanning.DiscoveredFile, items: [Item]?, readFailed: Bool, oversizedRecordCount: Int)] {
         await withTaskGroup(
@@ -457,7 +460,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
                         do {
                             let streamed = try JSONLStreamingReader.read(
                                 path: file.path,
-                                initialState: initialState,
+                                initialState: initialStateForFile?(file.path) ?? initialState,
                                 parse: parse
                             )
                             result = (index, streamed.items, false, streamed.oversizedRecordCount)
@@ -471,14 +474,14 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
                     return result
                 }
             }
-
+            
             var nextIndex = 0
             let initialCount = min(maxConcurrentParses, files.count)
             for index in 0..<initialCount where !Task.isCancelled {
                 addTask(at: index)
                 nextIndex += 1
             }
-
+            
             var results = files.map {
                 (file: $0, items: Optional<[Item]>.none, readFailed: false, oversizedRecordCount: 0)
             }

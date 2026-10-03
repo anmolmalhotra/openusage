@@ -11,25 +11,31 @@ final class OllamaProvider: ProviderRuntime {
             ProviderLink(label: "API Keys", url: "https://ollama.com/settings/keys")
         ]
     )
-
+    
     /// One notice for every way the plan can go missing, so a failed request and an unreadable response
     /// read the same to the user — the badge is gone for a reason, and the meters are still current.
     private static let planWarning = "Couldn't read your Ollama plan. Usage below is still up to date."
-
+    
     let authStore: OllamaAuthStore
     let usageClient: OllamaUsageClient
+    let piUsageScanner: PiUsageScanner
+    let pricing: @Sendable () async -> ModelPricing
     let now: @Sendable () -> Date
-
+    
     init(
         authStore: OllamaAuthStore = OllamaAuthStore(),
         usageClient: OllamaUsageClient = OllamaUsageClient(),
-        now: @escaping @Sendable () -> Date = Date.init
+        piUsageScanner: PiUsageScanner = .shared,
+        now: @escaping @Sendable () -> Date = Date.init,
+        pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
         self.authStore = authStore
         self.usageClient = usageClient
+        self.piUsageScanner = piUsageScanner
+        self.pricing = pricing
         self.now = now
     }
-
+    
     var widgetDescriptors: [WidgetDescriptor] {
         [
             // Not `isSessionWindow`: that treatment ("Not started" on a fresh pool) needs a reset date,
@@ -52,22 +58,32 @@ final class OllamaProvider: ProviderRuntime {
             // still sit at $0.00, so the "No usage in this period" hover would be plainly wrong.
             .values(id: "ollama.last4Weeks", provider: provider, title: "Last 4 Weeks",
                     metricLabel: "Last 4 Weeks", selection: .kind(.dollars),
-                    valueWord: "spent")
-        ]
+                    valueWord: "spent"),
+            .usageTrend(provider: provider)
+                .exportingHistory(
+                    scope: .machineLocal,
+                    estimatedCost: true,
+                    sourceNote: "From your pi sessions (estimated)"
+                )
+        ] + WidgetDescriptor.spendTiles(provider: provider)
     }
-
-    /// Ollama is opt-in: it never enables itself, so the user turns it on in Customize.
-    ///
-    /// This is the one provider whose local credential cannot answer the question the probe is asking.
-    /// Ollama writes `~/.ollama/id_ed25519` the first time it runs, long before — and whether or not —
-    /// `ollama signin` ever links it to an ollama.com account, and only the network knows whether that
-    /// link exists. Probing the key would therefore auto-enable Ollama for everyone who runs local
-    /// models, handing them a provider card whose entire content is a Cloud sign-in warning for a
-    /// product they don't use. Reporting no credentials is the honest answer to "is Ollama Cloud set up
-    /// here?", and it costs a Cloud subscriber one visit to Customize.
-    func hasLocalCredentials() async -> Bool { false }
-
+    
+    /// The signing key alone does not prove an Ollama Cloud account is linked. Keep Cloud opt-in,
+    /// but detect actual pi sessions because those can populate local history without Cloud access.
+    func hasLocalCredentials() async -> Bool {
+        await piUsageScanner.hasUsage(cardID: provider.id)
+    }
+    
     func refresh() async -> ProviderSnapshot {
+        let snapshot = await refreshNative()
+        let refreshedAt = now()
+        let scan = await piUsageScanner.scan(cardID: provider.id, now: refreshedAt, pricing: await pricing())
+        return PiUsageHistory.appending(
+            scan, to: snapshot, sourceNote: "From your pi sessions (estimated)", now: refreshedAt
+        )
+    }
+    
+    private func refreshNative() async -> ProviderSnapshot {
         let key: OllamaSigningKey?
         do {
             key = try await loadOffMainActor { [authStore] in try authStore.loadSigningKey() }
@@ -77,12 +93,12 @@ final class OllamaProvider: ProviderRuntime {
         guard let key else {
             return ProviderSnapshot.error(provider: provider, error: OllamaAuthError.missingKey)
         }
-
+        
         // The usage endpoint is required; the account endpoint is best-effort (plan name only), so a
         // failure there must not blank out the meters.
         let usage = await load { try await usageClient.fetchUsage(key: key) }
         let account = await loadAccount { try await usageClient.fetchAccount(key: key) }
-
+        
         var accountBody: Data?
         var warning: String?
         switch account {
@@ -95,7 +111,7 @@ final class OllamaProvider: ProviderRuntime {
             AppLog.warn(.refresh, "ollama plan lookup failed (\(error.errorCategory.rawValue)); meters unaffected")
             warning = Self.planWarning
         }
-
+        
         switch usage {
         case .success(let body):
             do {
@@ -120,7 +136,7 @@ final class OllamaProvider: ProviderRuntime {
             return ProviderSnapshot.error(provider: provider, error: error)
         }
     }
-
+    
     /// Run the required usage call and classify the outcome: the body on 2xx, an auth failure on
     /// 401/403, or a typed failure for any other non-2xx or transport error.
     private func load(_ call: () async throws -> HTTPResponse) async -> UsageResult {
@@ -135,7 +151,7 @@ final class OllamaProvider: ProviderRuntime {
             return .failed(.connectionFailed)
         }
     }
-
+    
     /// Run the best-effort account call. It never throws into the snapshot — a transport error or a
     /// non-2xx just means "no plan name this refresh" — but it returns *why* so the caller can log the
     /// failure and warn, rather than letting it disappear.
