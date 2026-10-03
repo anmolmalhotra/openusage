@@ -11,17 +11,17 @@ final class ZAIProvider: ProviderRuntime {
             ProviderLink(label: "API Keys", url: "https://z.ai/manage-apikey/apikey-list")
         ]
     )
-    
+
     let authStore: ZAIAuthStore
     let usageClient: ZAIUsageClient
     let piUsageScanner: PiUsageScanner
     let pricing: @Sendable () async -> ModelPricing
     let now: @Sendable () -> Date
-    
+
     init(
         authStore: ZAIAuthStore = ZAIAuthStore(),
         usageClient: ZAIUsageClient = ZAIUsageClient(),
-        piUsageScanner: PiUsageScanner = .shared,
+        piUsageScanner: PiUsageScanner = PiUsageScanner(),
         now: @escaping @Sendable () -> Date = Date.init,
         pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
@@ -31,7 +31,7 @@ final class ZAIProvider: ProviderRuntime {
         self.pricing = pricing
         self.now = now
     }
-    
+
     var widgetDescriptors: [WidgetDescriptor] {
         [
             .percent(id: "zai.session", provider: provider, title: "Session",
@@ -52,13 +52,13 @@ final class ZAIProvider: ProviderRuntime {
                 )
         ] + WidgetDescriptor.spendTiles(provider: provider)
     }
-    
+
     func hasLocalCredentials() async -> Bool {
         // Same source as `refresh()`: a stored or environment-exported API key.
         if await loadOffMainActor({ [authStore] in authStore.loadAPIKey() }) != nil { return true }
         return await piUsageScanner.hasUsage(cardID: provider.id)
     }
-    
+
     func refresh() async -> ProviderSnapshot {
         let snapshot = await refreshNative()
         let refreshedAt = now()
@@ -72,13 +72,13 @@ final class ZAIProvider: ProviderRuntime {
         guard let auth = await loadOffMainActor({ [authStore] in authStore.loadAPIKey() }) else {
             return ProviderSnapshot.error(provider: provider, error: ZAIAuthError.missingKey)
         }
-        
+
         // The quota endpoint is required; the subscription endpoint is best-effort (plan name only),
         // so a failure there must not blank out the meters. Both are fetched, and whatever the quota
         // returns is mapped alongside the plan name if the subscription succeeded.
         let quota = await load { try await usageClient.fetchQuota(apiKey: auth.apiKey) }
         let subscription = await loadOptional { try await usageClient.fetchSubscription(apiKey: auth.apiKey) }
-        
+
         switch quota {
         case .success(let body):
             // A valid key whose account has no GLM Coding Plan gets a 2xx with `success:false`. Surface
@@ -99,7 +99,7 @@ final class ZAIProvider: ProviderRuntime {
             return ProviderSnapshot.error(provider: provider, error: error)
         }
     }
-    
+
     /// Run the required quota call and classify the outcome: the body on 2xx, an auth failure on
     /// 401/403, or a typed failure for any other non-2xx, transport error, or empty body.
     private func load(_ call: () async throws -> HTTPResponse) async -> QuotaResult {
@@ -114,7 +114,7 @@ final class ZAIProvider: ProviderRuntime {
             return .failed(.connectionFailed)
         }
     }
-    
+
     /// Run the optional subscription call — never throws into the snapshot: a transport error, a
     /// non-2xx, or an auth failure all just mean "no plan name this refresh". Returns just the body
     /// (the only thing the mapper consumes); the outcome is otherwise discarded.

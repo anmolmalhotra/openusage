@@ -8,14 +8,14 @@ final class CodexProvider: ProviderRuntime {
             .init(label: "Dashboard", url: "https://chatgpt.com/codex/settings/usage")
         ])
     }
-    
+
     let provider: Provider
     let allowsUnattributedHistory: Bool
     var allowsCachedLocalHistory: Bool { allowsUnattributedHistory }
-    
+
     private let localHistory = CodexHistoryRefresh<CodexLocalHistory>()
     let localHistoryWait: Duration
-    
+
     let authStore: CodexAuthStore
     let usageClient: CodexUsageClient
     let logUsageScanner: CodexLogUsageScanner
@@ -24,14 +24,14 @@ final class CodexProvider: ProviderRuntime {
     let now: @Sendable () -> Date
     let pricing: @Sendable () async -> ModelPricing
     let fallbackModel: @MainActor () -> String?
-    
+
     init(
         localHistoryWait: Duration = .seconds(5),
         provider: Provider = CodexProvider.makeProvider(),
         authStore: CodexAuthStore = CodexAuthStore(),
         usageClient: CodexUsageClient = CodexUsageClient(),
         logUsageScanner: CodexLogUsageScanner = CodexLogUsageScanner(),
-        piUsageScanner: PiUsageScanner = .shared,
+        piUsageScanner: PiUsageScanner = PiUsageScanner(),
         openCodeUsageScanner: OpenCodeCodexUsageScanner = OpenCodeCodexUsageScanner(),
         allowsUnattributedHistory: Bool = true,
         now: @escaping @Sendable () -> Date = Date.init,
@@ -50,7 +50,7 @@ final class CodexProvider: ProviderRuntime {
         self.pricing = pricing
         self.fallbackModel = fallbackModel
     }
-    
+
     var widgetDescriptors: [WidgetDescriptor] {
         [
             .percent(id: "\(provider.id).session", provider: provider, title: "Session")
@@ -77,7 +77,7 @@ final class CodexProvider: ProviderRuntime {
                 )
         ] + WidgetDescriptor.spendTiles(provider: provider)
     }
-    
+
     func hasLocalCredentials() async -> Bool {
         // Same sources as `refresh()`: auth.json candidates first, keychain as the fallback. Only a
         // usable access token counts (see `hasUsableAccessToken`) — an API-key-only auth.json can't
@@ -91,7 +91,7 @@ final class CodexProvider: ProviderRuntime {
         guard allowsUnattributedHistory else { return false }
         return await piUsageScanner.hasUsage(cardID: "codex")
     }
-    
+
     func refresh() async -> ProviderSnapshot {
         let snapshot = await refreshNativeUsage()
         guard snapshot.errorCategory != nil, allowsUnattributedHistory else { return snapshot }
@@ -108,7 +108,7 @@ final class CodexProvider: ProviderRuntime {
         if authStore.expectedIdentity != nil { return await refreshAccount() }
         let fileCandidates = authStore.loadAuthCandidates()
         var lastFallbackError: Error?
-        
+
         for candidate in fileCandidates {
             do {
                 return try await probe(authState: candidate)
@@ -119,7 +119,7 @@ final class CodexProvider: ProviderRuntime {
                 return ProviderSnapshot.error(provider: provider, error: error)
             }
         }
-        
+
         if let keychainCandidate = await loadOffMainActor({ [authStore] in authStore.loadKeychainAuth() }) {
             do {
                 return try await probe(authState: keychainCandidate)
@@ -127,13 +127,13 @@ final class CodexProvider: ProviderRuntime {
                 return ProviderSnapshot.error(provider: provider, error: error)
             }
         }
-        
+
         if let lastFallbackError {
             return ProviderSnapshot.error(provider: provider, error: lastFallbackError)
         }
         return ProviderSnapshot.error(provider: provider, error: CodexAuthError.notLoggedIn)
     }
-    
+
     private func probe(authState initialState: CodexAuthState) async throws -> ProviderSnapshot {
         var authState = initialState
         guard var accessToken = authState.auth.tokens?.accessToken, !accessToken.isEmpty else {
@@ -142,7 +142,7 @@ final class CodexProvider: ProviderRuntime {
             }
             throw CodexAuthError.notLoggedIn
         }
-        
+
         if authStore.needsRefresh(authState.auth) {
             // The `codex` CLI may have rotated the token on disk since we loaded it. Re-read the live
             // credential first and adopt its (newer) access token — refreshing our stale copy would send
@@ -153,14 +153,14 @@ final class CodexProvider: ProviderRuntime {
                 accessToken = liveToken
             }
         }
-        
+
         if authStore.needsRefresh(authState.auth),
            let refreshToken = authState.auth.tokens?.refreshToken,
            !refreshToken.isEmpty {
             let refreshed = try await refreshAccessToken(authState: &authState, refreshToken: refreshToken)
             accessToken = refreshed
         }
-        
+
         let response = try await fetchUsageWithRetry(accessToken: accessToken, authState: &authState)
         // The access token may have rotated during the usage fetch's refresh-and-retry; read the live one.
         let currentToken = authState.auth.tokens?.accessToken ?? accessToken
@@ -169,10 +169,10 @@ final class CodexProvider: ProviderRuntime {
             accountID: authState.auth.tokens?.accountID
         )
         let mapped = try CodexUsageMapper.mapUsageResponse(response, resetCredits: resetCredits, now: now())
-        
+
         return await snapshot(mapped: mapped)
     }
-    
+
     func snapshot(mapped initial: CodexMappedUsage, warning: String? = nil) async -> ProviderSnapshot {
         var mapped = initial
         let history = await localHistory.value(wait: localHistoryWait) {
@@ -208,12 +208,12 @@ final class CodexProvider: ProviderRuntime {
             usageHistory: history?.usageHistory, warning: warning ?? historyWarning
         )
     }
-    
+
     private struct CodexLocalHistory: Sendable {
         var sourceNote: String
         var usageHistory: ProviderUsageHistory?
     }
-    
+
     private static func scanLocalHistory(
         pricing: @Sendable () async -> ModelPricing,
         fallbackModel: @MainActor () -> String?,
@@ -248,11 +248,11 @@ final class CodexProvider: ProviderRuntime {
                 fallbackPricingModelsByDay: scan.fallbackPricingModelsByDay
             )
         }
-        
+
         AppLog.info(LogTag.plugin("codex"), "local history scan completed")
         return CodexLocalHistory(sourceNote: baseNote, usageHistory: usageHistory)
     }
-    
+
     private static func localUsageSourceNote(hasPi: Bool, hasOpenCode: Bool) -> String {
         var sources = ["Codex logs"]
         if hasPi { sources.append("pi") }
@@ -262,7 +262,7 @@ final class CodexProvider: ProviderRuntime {
             : sources.joined(separator: " and ")
         return "From your \(joined) (estimated)"
     }
-    
+
     /// Fetches the on-demand reset-credit balance (and per-credit expiry) without ever failing the
     /// refresh: this is supplementary to the usage metrics, so a network error, timeout, or non-2xx just
     /// yields `nil` and the mapper falls back to the count embedded in the usage body. Logged, not thrown —
@@ -275,7 +275,7 @@ final class CodexProvider: ProviderRuntime {
             return nil
         }
     }
-    
+
     private func fetchUsageWithRetry(accessToken: String, authState: inout CodexAuthState) async throws -> HTTPResponse {
         var working = authState
         defer { authState = working }
@@ -298,7 +298,7 @@ final class CodexProvider: ProviderRuntime {
             authExpired: CodexAuthError.tokenExpired
         )
     }
-    
+
     /// Re-reads the credential from its original source (the same on-disk file or keychain entry) so a
     /// token the `codex` CLI rotated out-of-band is picked up before we attempt our own refresh. Reads
     /// only that one source — matching how `codex` reads the single `auth.json` from `CODEX_HOME` —
@@ -313,7 +313,7 @@ final class CodexProvider: ProviderRuntime {
             return authStore.loadPiAuth(source)
         }
     }
-    
+
     private func refreshAccessToken(authState: inout CodexAuthState, refreshToken: String) async throws -> String {
         let response = try await usageClient.refreshToken(refreshToken)
         authState.auth.tokens?.accessToken = response.accessToken

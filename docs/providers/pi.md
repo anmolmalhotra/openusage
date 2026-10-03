@@ -51,9 +51,10 @@ OpenUsage scans JSONL session files recursively, checking these locations in ord
 2. `PI_CODING_AGENT_DIR/sessions`, when the Pi config directory is overridden.
 3. `~/.pi/agent/sessions/` by default.
 
-Set overrides in the environment available to OpenUsage as well as Pi. Unchanged files reuse the
-local parse cache. Replayed copies of the same message count once, and days follow your Mac's local
-time zone. Unreadable logs are reported rather than treated as proof of zero usage.
+Set overrides in the environment available to OpenUsage as well as Pi. Unchanged files reuse a
+local parse cache shared across provider cards. Replayed copies of the same message count once,
+and days follow your Mac's local time zone. Unreadable logs are reported rather than treated as
+proof of zero usage.
 
 Positive costs recorded by Pi are used directly. Missing or zero costs fall back to the shared
 [model pricing](../pricing.md) engine; these figures represent API-equivalent usage, not a

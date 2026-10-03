@@ -17,7 +17,7 @@ enum OpenCodeUsageError: Error, LocalizedError, Equatable {
     case unauthorized
     /// Valid key, but this account has no Go subscription (HTTP 403 / `EntitlementError`).
     case noGoSubscription
-    
+
     var errorDescription: String? {
         switch self {
         case .notLoggedIn:
@@ -52,28 +52,28 @@ final class OpenCodeProvider: ProviderRuntime {
             .init(label: "Dashboard", url: "https://opencode.ai/auth")
         ]
     )
-    
+
     let authStore: OpenCodeAuthStore
     let usageClient: OpenCodeUsageClient
     let usageScanner: OpenCodeUsageScanner
     let piUsageScanner: PiUsageScanner
     let now: @Sendable () -> Date
     let pricing: @Sendable () async -> ModelPricing
-    
+
     /// Names the local source on hover (the dollars can only undercount true account usage — this
     /// machine only). No "(estimated)": OpenCode records its own per-message cost, so the values are
     /// measured, not imputed.
     private let sourceNote = "From your OpenCode logs"
-    
+
     /// Edge-triggers the auth-read-failure log so a persistently unreadable `auth.json` warns once per
     /// run, not once per 5-minute refresh.
     private var loggedAuthReadFailure = false
-    
+
     init(
         authStore: OpenCodeAuthStore = OpenCodeAuthStore(),
         usageClient: OpenCodeUsageClient = OpenCodeUsageClient(),
         usageScanner: OpenCodeUsageScanner = OpenCodeUsageScanner(),
-        piUsageScanner: PiUsageScanner = .shared,
+        piUsageScanner: PiUsageScanner = PiUsageScanner(),
         now: @escaping @Sendable () -> Date = Date.init,
         pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
@@ -84,7 +84,7 @@ final class OpenCodeProvider: ProviderRuntime {
         self.now = now
         self.pricing = pricing
     }
-    
+
     var widgetDescriptors: [WidgetDescriptor] {
         // Go plan windows from `/zen/go/v1/usage` (Session/Weekly/Monthly + trend above the fold);
         // the spend tiles below sum combined OpenCode-hosted (Go + Zen) spend from local logs.
@@ -103,7 +103,7 @@ final class OpenCodeProvider: ProviderRuntime {
                 )
         ] + WidgetDescriptor.spendTiles(provider: provider)
     }
-    
+
     func hasLocalCredentials() async -> Bool {
         // Same sources as `refresh()`: the local `opencode-go` auth key, or any hosted usage already in
         // the local database. Local-only, off the main actor. An unreadable auth.json is itself an
@@ -119,7 +119,7 @@ final class OpenCodeProvider: ProviderRuntime {
         if hasNativeCredentials { return true }
         return await piUsageScanner.hasUsage(cardID: provider.id)
     }
-    
+
     func refresh() async -> ProviderSnapshot {
         // Native and Pi history share a clock so the refresh cannot straddle a midnight boundary.
         let refreshedAt = now()
@@ -133,7 +133,7 @@ final class OpenCodeProvider: ProviderRuntime {
             now: refreshedAt
         )
     }
-    
+
     private func refreshNative(refreshedAt: Date) async -> ProviderSnapshot {
         var goKey: String?
         var authReadError: OpenCodeUsageError?
@@ -149,7 +149,7 @@ final class OpenCodeProvider: ProviderRuntime {
         } catch {
             authReadError = .credentialsUnreadable(detail: error.localizedDescription)
         }
-        
+
         var meterLines: [MetricLine] = []
         var plan: String?
         var goError: OpenCodeUsageError?
@@ -167,7 +167,7 @@ final class OpenCodeProvider: ProviderRuntime {
                 AppLog.warn(LogTag.plugin("opencode"), "Go meters unavailable: \(error.localizedDescription)")
             }
         }
-        
+
         let scan: OpenCodeUsageScan?
         do {
             scan = try await usageScanner.scan(now: refreshedAt)
@@ -181,7 +181,7 @@ final class OpenCodeProvider: ProviderRuntime {
             )
             scan = nil
         }
-        
+
         var lines = meterLines
         if let scan {
             SpendTileMapper.appendTokenUsage(
@@ -193,7 +193,7 @@ final class OpenCodeProvider: ProviderRuntime {
             )
             SpendTileMapper.appendUsageTrend(scan.logScan.series, to: &lines, now: refreshedAt, note: sourceNote)
         }
-        
+
         if lines.isEmpty {
             if let goError {
                 return ProviderSnapshot.error(provider: provider, error: goError)
@@ -208,7 +208,7 @@ final class OpenCodeProvider: ProviderRuntime {
             }
         }
         MetricLine.appendNoDataIfNeeded(&lines)
-        
+
         return ProviderSnapshot.make(
             provider: provider,
             plan: plan,
@@ -223,13 +223,13 @@ final class OpenCodeProvider: ProviderRuntime {
             }
         )
     }
-    
+
     private enum GoFetch {
         case meters([MetricLine])
         case noSubscription
         case failed(OpenCodeUsageError)
     }
-    
+
     private func fetchGoMeters(apiKey: String) async -> GoFetch {
         let response: HTTPResponse
         do {
@@ -237,7 +237,7 @@ final class OpenCodeProvider: ProviderRuntime {
         } catch {
             return .failed(.connectionFailed)
         }
-        
+
         if response.statusCode == 401 {
             return .failed(.unauthorized)
         }

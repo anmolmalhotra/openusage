@@ -2,19 +2,19 @@ import XCTest
 @testable import OpenUsage
 
 final class AntigravityProviderTests: XCTestCase {
-    
+
     // MARK: - Helpers
-    
+
     private func used(_ line: MetricLine?) -> Double? {
         guard case .progress(_, let used, _, _, _, _, _)? = line else { return nil }
         return used
     }
-    
+
     private func resetsAt(_ line: MetricLine?) -> Date? {
         guard case .progress(_, _, _, _, let resetsAt, _, _)? = line else { return nil }
         return resetsAt
     }
-    
+
     func testGoogleRefreshFormEncodesReservedCharactersInRequestBody() async throws {
         let http = FakeHTTPClient(response: HTTPResponse(
             statusCode: 200,
@@ -22,9 +22,9 @@ final class AntigravityProviderTests: XCTestCase {
             body: Data(#"{"access_token":"new-token","expires_in":3600}"#.utf8)
         ))
         let client = AntigravityUsageClient(lsHTTP: http, http: http)
-        
+
         _ = await client.refreshGoogleToken("refresh token&=+/?%")
-        
+
         let request = try XCTUnwrap(http.requests.first)
         XCTAssertEqual(request.method, "POST")
         XCTAssertEqual(request.headers["Content-Type"], "application/x-www-form-urlencoded")
@@ -36,9 +36,9 @@ final class AntigravityProviderTests: XCTestCase {
                 "&grant_type=refresh_token"
         )
     }
-    
+
     // MARK: - Mapper: pooling
-    
+
     func testBuildLinesPoolsAndOrders() {
         let configs = [
             AntigravityModelConfig(label: "Gemini 3 Pro (High)", modelID: "a", remainingFraction: 0.8, resetTime: nil),
@@ -48,14 +48,14 @@ final class AntigravityProviderTests: XCTestCase {
             AntigravityModelConfig(label: "GPT-OSS 120B (Medium)", modelID: "e", remainingFraction: 0.9, resetTime: nil)
         ]
         let lines = AntigravityUsageMapper.buildLines(configs)
-        
+
         // Pro and Flash share one pool since Antigravity's 2026-05-19 quota merge, so all Gemini
         // models collapse into a single "Session" meter (worst fraction wins across the whole pool).
         XCTAssertEqual(lines.map(\.label), ["Session", "Claude"])
         XCTAssertEqual(used(lines[0]), 50)  // worst Gemini fraction (Pro Low 0.5) -> 50% used
         XCTAssertEqual(used(lines[1]), 70)  // worst non-Gemini (Claude 0.3) -> 70% used
     }
-    
+
     func testBuildLinesDedupKeepsWorstFractionAndItsReset() {
         let earlier = Date(timeIntervalSince1970: 1_000)
         let later = Date(timeIntervalSince1970: 2_000)
@@ -68,7 +68,7 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertEqual(used(lines[0]), 80)              // worst fraction 0.2
         XCTAssertEqual(resetsAt(lines[0]), earlier)     // reset of the kept (worst) entry
     }
-    
+
     func testBuildLinesDropsBlacklistedAndEmptyLabels() {
         let configs = [
             AntigravityModelConfig(label: "Gemini 2.5 Pro", modelID: "MODEL_GOOGLE_GEMINI_2_5_PRO", remainingFraction: 1, resetTime: nil),
@@ -79,7 +79,7 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertEqual(lines.map(\.label), ["Session"])
         XCTAssertEqual(used(lines[0]), 40)
     }
-    
+
     func testBuildLinesClampsOutOfRangeFractions() {
         let configs = [
             AntigravityModelConfig(label: "Gemini 3 Pro", modelID: "a", remainingFraction: 1.5, resetTime: nil),
@@ -89,7 +89,7 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertEqual(used(lines.first { $0.label == "Session" }), 0)   // clamped to full
         XCTAssertEqual(used(lines.first { $0.label == "Claude" }), 100)  // clamped to empty
     }
-    
+
     func testPoolLabelClassification() {
         // Pro and Flash merged into one shared Gemini pool (2026-05-19 quota restructure), shown as
         // the "Session" meter.
@@ -102,14 +102,14 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertEqual(AntigravityUsageMapper.poolLabel("Gemini Ultra"), "Session")
         XCTAssertEqual(AntigravityUsageMapper.poolLabel("gemini-3"), "Session")
     }
-    
+
     func testNormalizeLabelStripsTrailingParenthetical() {
         XCTAssertEqual(AntigravityUsageMapper.normalizeLabel("Gemini 3 Pro (High)"), "Gemini 3 Pro")
         XCTAssertEqual(AntigravityUsageMapper.normalizeLabel("Claude Sonnet 4.6"), "Claude Sonnet 4.6")
     }
-    
+
     // MARK: - Mapper: plan normalization
-    
+
     func testFormatPlan() {
         XCTAssertEqual(AntigravityUsageMapper.formatPlan("Google AI Pro"), "Pro")
         XCTAssertEqual(AntigravityUsageMapper.formatPlan("Google AI Ultra"), "Ultra")
@@ -118,9 +118,9 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertNil(AntigravityUsageMapper.formatPlan("   "))
         XCTAssertNil(AntigravityUsageMapper.formatPlan(nil))
     }
-    
+
     // MARK: - Mapper: response parsing
-    
+
     func testParseUserStatusPrefersUserTier() {
         let json = """
         {"userStatus":{"userTier":{"name":"Google AI Pro"},
@@ -140,11 +140,11 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertEqual(used(lines[1]), 0)
         XCTAssertNotNil(resetsAt(lines[0]))
     }
-    
+
     func testParseUserStatusReturnsNilWithoutUserStatus() {
         XCTAssertNil(AntigravityUsageMapper.parseUserStatus(Data("{}".utf8)))
     }
-    
+
     func testParseCloudCodeModelsDropsInternalAndEmptyLabel() {
         let json = """
         {"models":{
@@ -160,7 +160,7 @@ final class AntigravityProviderTests: XCTestCase {
         let lines = AntigravityUsageMapper.buildLines(configs)
         XCTAssertEqual(lines.map(\.label), ["Session"])  // c filtered by blacklist
     }
-    
+
     func testParseCloudCodeModelsTreatsMissingQuotaAsDepleted() {
         let json = """
         {"models":{"a":{"model":"MODEL_OK","displayName":"Gemini 3.1 Pro (High)"}}}
@@ -168,14 +168,14 @@ final class AntigravityProviderTests: XCTestCase {
         let lines = AntigravityUsageMapper.buildLines(AntigravityUsageMapper.parseCloudCodeModels(Data(json.utf8)))
         XCTAssertEqual(used(lines.first), 100)  // no quotaInfo -> fully used
     }
-    
+
     func testParseLoadCodeAssistPlan() {
         let json = """
         {"currentTier":{"name":"Gemini Code Assist"},"paidTier":{"name":"Gemini Code Assist in Google One AI Pro"}}
         """
         XCTAssertEqual(AntigravityUsageMapper.parseLoadCodeAssistPlan(Data(json.utf8)), "Pro")
     }
-    
+
     func testParseQuotaBuckets() {
         let json = """
         {"buckets":[{"modelId":"gemini-3-pro-preview","remainingFraction":0.5,"resetTime":"2026-06-27T04:44:01Z"},
@@ -186,16 +186,16 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertEqual(lines.map(\.label), ["Session"])
         XCTAssertEqual(used(lines[0]), 50)
     }
-    
+
     // MARK: - Language server discovery (pure parsing)
-    
+
     func testExtractFlagBothForms() {
         let command = "/bin/language_server --csrf_token ABC-123 --extension_server_port=42 --foo"
         XCTAssertEqual(LanguageServerDiscovery.extractFlag(command: command, flag: "--csrf_token"), "ABC-123")
         XCTAssertEqual(LanguageServerDiscovery.extractFlag(command: command, flag: "--extension_server_port"), "42")
         XCTAssertNil(LanguageServerDiscovery.extractFlag(command: command, flag: "--missing"))
     }
-    
+
     func testParseListeningPorts() {
         let lsof = """
         COMMAND    PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
@@ -204,20 +204,20 @@ final class AntigravityProviderTests: XCTestCase {
         """
         XCTAssertEqual(LanguageServerDiscovery.parseListeningPorts(lsof), [52168, 52169])
     }
-    
+
     func testMarkerRankExactFlagBeatsPathSubstring() {
         let withFlag = "/x/language_server --app_data_dir antigravity --csrf_token z"
         XCTAssertEqual(LanguageServerDiscovery.markerRank(command: withFlag, markersLower: ["antigravity"]), 0)
-        
+
         let pathOnly = "/opt/antigravity/bin/language_server --standalone"
         XCTAssertEqual(LanguageServerDiscovery.markerRank(command: pathOnly, markersLower: ["antigravity"]), 1)
-        
+
         let mismatch = "/x/language_server --app_data_dir windsurf"
         XCTAssertNil(LanguageServerDiscovery.markerRank(command: mismatch, markersLower: ["antigravity"]))
-        
+
         XCTAssertEqual(LanguageServerDiscovery.markerRank(command: "anything", markersLower: []), 0)
     }
-    
+
     func testCommandMatchesProcess() {
         let ls = "/Applications/Antigravity.app/Contents/Resources/bin/language_server --standalone"
         XCTAssertTrue(LanguageServerDiscovery.commandMatchesProcess(command: ls, processNameLower: "language_server"))
@@ -225,7 +225,7 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertTrue(LanguageServerDiscovery.commandMatchesProcess(command: agy, processNameLower: "agy"))
         XCTAssertFalse(LanguageServerDiscovery.commandMatchesProcess(command: ls, processNameLower: "agy"))
     }
-    
+
     func testRankedCandidatesFindsLanguageServer() {
         let ps = """
         4221 /Applications/Antigravity.app/Contents/MacOS/Antigravity
@@ -241,9 +241,9 @@ final class AntigravityProviderTests: XCTestCase {
         let candidates = LanguageServerDiscovery.rankedCandidates(psOutput: ps, options: options)
         XCTAssertEqual(candidates.map(\.pid), [4276])
     }
-    
+
     // MARK: - Keychain token extraction
-    
+
     func testExtractTokenFromGoKeyringWrappedJSON() {
         let inner = """
         {"token":{"access_token":"ya29.test","refresh_token":"1//refresh","expiry":"2099-01-01T00:00:00Z","token_type":"Bearer"},"auth_method":"consumer"}
@@ -254,14 +254,14 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertEqual(token?.refreshToken, "1//refresh")
         XCTAssertEqual(token?.expiry, OpenUsageISO8601.date(from: "2099-01-01T00:00:00Z"))
     }
-    
+
     func testExtractTokenFromRawJSONAndBearerAndPlain() {
         let plainJSON = #"{"access_token":"abc","refresh_token":"r"}"#
         XCTAssertEqual(AntigravityAuthStore.extractToken(fromKeychainRaw: plainJSON)?.accessToken, "abc")
         XCTAssertEqual(AntigravityAuthStore.extractToken(fromKeychainRaw: "Bearer xyz")?.accessToken, "xyz")
         XCTAssertEqual(AntigravityAuthStore.extractToken(fromKeychainRaw: "rawtoken")?.accessToken, "rawtoken")
     }
-    
+
     func testLoadCachedTokenAppliesRefreshBuffer() {
         let now = Date(timeIntervalSince1970: 1_000_000)
         func store(expiresInSeconds: Double) -> AntigravityAuthStore {
@@ -278,7 +278,7 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertNil(store(expiresInSeconds: 30).loadCachedToken(matching: source))
         XCTAssertEqual(store(expiresInSeconds: 7200).loadCachedToken(matching: source), "ya29.cached")
     }
-    
+
     func testLoadKeychainTokenThroughStore() throws {
         let inner = #"{"token":{"access_token":"ya29.kc","refresh_token":"1//r"}}"#
         let wrapped = "go-keyring-base64:" + Data(inner.utf8).base64EncodedString()
@@ -287,9 +287,9 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertEqual(token?.accessToken, "ya29.kc")
         XCTAssertEqual(token?.refreshToken, "1//r")
     }
-    
+
     // MARK: - Provider integration (Cloud Code path, no language server)
-    
+
     /// A provider on the Cloud Code path (no language server), signed in via a wrapped keychain
     /// token. Pass `keychainExpiry: nil` for a signed-out provider (empty keychain).
     @MainActor
@@ -309,7 +309,7 @@ final class AntigravityProviderTests: XCTestCase {
             piUsageScanner: PiUsageFixture.emptyScanner()
         )
     }
-    
+
     @MainActor
     func testRefreshUsesCloudCodeWhenNoLanguageServer() async {
         let modelsJSON = """
@@ -320,7 +320,7 @@ final class AntigravityProviderTests: XCTestCase {
         }}
         """
         let planJSON = #"{"paidTier":{"name":"Google AI Pro"}}"#
-        
+
         let routing = RoutingHTTPClient { request in
             let path = request.url.path
             // Builds without the summary RPC 404 it — this test also covers summary-404 → legacy.
@@ -335,9 +335,9 @@ final class AntigravityProviderTests: XCTestCase {
             }
             return HTTPResponse(statusCode: 404, headers: [:], body: Data())
         }
-        
+
         let provider = makeCloudCodeProvider(routing: routing)
-        
+
         let snapshot = await provider.refresh()
         XCTAssertEqual(snapshot.plan, "Pro")
         // Legacy per-model data merges into the two pool meters (worst fraction per pool).
@@ -345,7 +345,7 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertEqual(used(snapshot.lines[0]), 60)
         XCTAssertEqual(used(snapshot.lines[1]), 30)
     }
-    
+
     @MainActor
     func testRefreshErrorsWhenNothingAvailable() async {
         let routing = RoutingHTTPClient { _ in HTTPResponse(statusCode: 500, headers: [:], body: Data()) }
@@ -354,7 +354,7 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertTrue(snapshot.lines.contains { $0.isError })
         XCTAssertEqual(snapshot.errorCategory, .notLoggedIn)
     }
-    
+
     @MainActor
     func testRefreshReportsUnavailableWhenSignedInButCloudCodeDown() async {
         // Valid keychain token, but every Cloud Code endpoint is down. A signed-in user should see a
@@ -365,7 +365,7 @@ final class AntigravityProviderTests: XCTestCase {
         XCTAssertTrue(snapshot.lines.contains { $0.isError })
         XCTAssertEqual(snapshot.errorCategory, .network)
     }
-    
+
     @MainActor
     func testDeadRefreshTokenReportsAuthExpired() async {
         // Access token already expired (skipped); refresh returns 400 invalid_grant. A dead refresh
@@ -380,7 +380,7 @@ final class AntigravityProviderTests: XCTestCase {
         let snapshot = await provider.refresh()
         XCTAssertEqual(snapshot.errorCategory, .authExpired)
     }
-    
+
     @MainActor
     func testAuthFailureThenThrottledRefreshReportsUnavailable() async {
         // A usable token 401s (sawAuthFailure), then the OAuth refresh hits 503. An expired access token
@@ -396,7 +396,7 @@ final class AntigravityProviderTests: XCTestCase {
         let snapshot = await provider.refresh()
         XCTAssertEqual(snapshot.errorCategory, .network)
     }
-    
+
     @MainActor
     func testRateLimitedRefreshReportsUnavailable() async {
         // Access token expired; refresh hits 429 (rate limited). Transient, not a revoked token — so
@@ -411,7 +411,7 @@ final class AntigravityProviderTests: XCTestCase {
         let snapshot = await provider.refresh()
         XCTAssertEqual(snapshot.errorCategory, .network)
     }
-    
+
     @MainActor
     func testRefreshAfterSuccessfulRefreshTreatsOutageAsUnavailable() async {
         // First fetch 401 -> OAuth refresh succeeds -> retry fetch 503. The refreshed token is valid, so

@@ -33,7 +33,7 @@ enum PiProviderMapping {
         "opencode-zen": "opencode",
         "openrouter": "openrouter"
     ]
-    
+
     /// The OpenUsage card id for a pi provider, or nil when pi used a provider OpenUsage doesn't track.
     static func cardID(forPiProvider provider: String) -> String? {
         providerToCard[provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()]

@@ -10,30 +10,28 @@ import Foundation
 /// Codex log scanners use. Pi's usage shape differs from Claude Code's (`usage.input`/`output`,
 /// nested `usage.cost.total`), so it has its own parser rather than routing through those scanners.
 ///
-/// An actor holding the versioned incremental parse cache (keyed path + size + mtime) in memory and
-/// Application Support, so refreshes and relaunches parse only changed session files. A single shared
-/// instance is used by every consuming provider, so pi's logs are parsed once rather than once per card.
+/// Provider-owned scanner instances share a versioned incremental parse cache (keyed by path, size,
+/// and mtime) in memory and Application Support, so refreshes and relaunches parse only changed files.
+/// The shared cache serializes scans for the same sessions directory across provider instances.
 actor PiUsageScanner {
     /// How a card prices a pi request that carries no cost of its own. Providers with their own
     /// request rules (Codex's long-context and priority tiers) supply their estimator; the rest use
     /// the shared pricing engine.
     typealias CostEstimator = @Sendable (String, TokenBreakdown) -> Double?
-    
-    static let shared = PiUsageScanner()
-    
+
     private let environment: EnvironmentReading
     private let homeDirectory: @Sendable () -> URL
     private let scanner: IncrementalJSONLScanner<Entry>
-    
+
     private static let sharedScanner = IncrementalJSONLScanner<Entry>(
         logTag: LogTag.plugin("pi"),
         persistence: JSONLScanCachePersistence(namespace: "pi", schemaVersion: 3)
     )
-    
+
     static func flushPersistentCacheWrites() async {
         await sharedScanner.flushPendingWrites()
     }
-    
+
     init(
         environment: EnvironmentReading = ProcessEnvironmentReader(),
         homeDirectory: @escaping @Sendable () -> URL = { FileManager.default.homeDirectoryForCurrentUser },
@@ -43,7 +41,7 @@ actor PiUsageScanner {
         self.homeDirectory = homeDirectory
         self.scanner = incrementalScanner ?? Self.sharedScanner
     }
-    
+
     /// One parsed assistant-message usage line. Raw timestamp is kept so a cached parse stays valid as
     /// the window slides; `cardID` is resolved at parse time so aggregation is a cheap filter.
     struct Entry: Codable, Sendable, Equatable {
@@ -63,7 +61,7 @@ actor PiUsageScanner {
         /// Pi's reported total, falling back to the sum of its token buckets when missing or zero.
         var reportedTotalTokens: Int
     }
-    
+
     /// Scan the last `daysBack` days of pi logs for one card. Returns nil when pi's sessions directory
     /// has no log files at all, so a provider with no pi usage folds in nothing.
     func scan(
@@ -99,9 +97,9 @@ actor PiUsageScanner {
         )
         return files.isEmpty ? nil : entries
     }
-    
+
     // MARK: - Parsing
-    
+
     /// Each file keeps its header identity across the streaming reader's bounded batches.
     struct ParseState: Sendable {
         var sourcePath: String?
@@ -139,7 +137,7 @@ actor PiUsageScanner {
         }
         return entries
     }
-    
+
     static func parseLine(_ data: Data, sessionID: String? = nil) -> Entry? {
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               object["type"] as? String == "message",
@@ -151,7 +149,7 @@ actor PiUsageScanner {
               let cardID = PiProviderMapping.cardID(forPiProvider: providerID),
               let usage = message["usage"] as? [String: Any]
         else { return nil }
-        
+
         guard let input = tokenCount(usage["input"]),
               let output = tokenCount(usage["output"]),
               let cacheRead = tokenCount(usage["cacheRead"]),
@@ -221,14 +219,14 @@ actor PiUsageScanner {
         guard let number = ProviderParse.number(value), number > 0 else { return 0 }
         return Int(exactly: number.rounded(.towardZero))
     }
-    
+
     // MARK: - Dedup and aggregation
-    
+
     /// Session copies and lineage-linked forks may repeat the same completed request.
     static func dedup(_ entries: [Entry]) -> [Entry] {
         PiUsageDeduplication.deduplicate(entries)
     }
-    
+
     /// Bucket the card's entries into local calendar days. Cost is pi's carried total when it recorded
     /// one, else the tokens priced through `pricing`; a model that can't be priced and carries no cost
     /// is excluded from the totals and surfaced as the tile's unknown-model warning, matching the log
@@ -245,7 +243,7 @@ actor PiUsageScanner {
             let day = DailyUsageAccumulator.dayKey(from: entry.timestamp)
             let trimmedModel = entry.model.nilIfEmpty
             let modelName = trimmedModel ?? ModelUsageEntry.unattributedModelName
-            
+
             let cost: Double
             if let carried = entry.carriedCost, carried > 0 {
                 cost = carried
