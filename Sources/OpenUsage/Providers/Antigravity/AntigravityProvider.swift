@@ -72,7 +72,7 @@ final class AntigravityProvider: ProviderRuntime {
             }
             guard keychainToken != nil else {
                 await loadOffMainActor { [authStore] in authStore.discardCachedToken() }
-                return await piUsageScanner.hasUsage(cardID: provider.id)
+                return await piUsageScanner.hasUsage(cardID: provider.id, now: now())
             }
             return true
         } catch {

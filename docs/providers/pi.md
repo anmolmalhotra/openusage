@@ -39,7 +39,9 @@ and Z.ai gain Pi-based Usage Trend, Today, Yesterday, and Last 30 Days metrics. 
 start disabled; enable the ones you want in Customize. Their history covers Pi sessions only, not
 all activity billed to those services.
 
-Mapped Pi logs can satisfy local provider detection even without a native login. Existing provider
+Mapped Pi logs from the last 30 days can satisfy local provider detection for Claude, Codex, Grok,
+Antigravity, and OpenCode, subject to their account safeguards. Pi logs alone do not switch on
+Copilot, Ollama, or Z.ai; enable those cards and their history metrics in Customize. Existing provider
 toggles are still respected. Local Pi history remains available when native credentials are missing
 or a live usage request fails; a warning explains why live meters are unavailable.
 
@@ -56,7 +58,14 @@ local parse cache shared across provider cards. Replayed copies of the same mess
 and days follow your Mac's local time zone. Unreadable logs are reported rather than treated as
 proof of zero usage.
 
+Both assistant messages and separate `usage` records contribute to history when they name a mapped
+provider. Separate records include billed work such as cache warming. Pi's compaction and branch
+summary records can carry usage but omit its provider and model; these costs cannot be assigned
+reliably to a provider card. OpenUsage skips them and records a warning in its log. See Pi's
+[session format](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/session-format.md).
+
 Positive costs recorded by Pi are used directly. Missing or zero costs fall back to the shared
 [model pricing](../pricing.md) engine; these figures represent API-equivalent usage, not a
 subscription bill. Models that cannot be priced are excluded from cost and token totals and listed
-in the unknown-model warning, following the same rules as other local spend sources.
+in the unknown-model warning, following the same rules as other local spend sources. When all
+history is unpriced, the provider warning still names those models even though spend rows are empty.

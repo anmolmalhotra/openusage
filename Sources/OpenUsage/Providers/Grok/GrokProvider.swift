@@ -55,7 +55,7 @@ final class GrokProvider: ProviderRuntime {
             ((try? authStore.loadAuthCandidates()) ?? []).isEmpty == false
         }
         if hasNativeCredentials { return true }
-        return await piUsageScanner.hasUsage(cardID: provider.id)
+        return await piUsageScanner.hasUsage(cardID: provider.id, now: now())
     }
 
     func refresh() async -> ProviderSnapshot {

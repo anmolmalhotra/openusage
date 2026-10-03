@@ -139,8 +139,9 @@ final class PiUsageScannerRobustnessTests: XCTestCase {
             environment: FakeEnvironment(["PI_CODING_AGENT_SESSION_DIR": directory.path]),
             homeDirectory: { directory }, incrementalScanner: IncrementalJSONLScanner<PiUsageScanner.Entry>()
         )
-        let hasClaude = await scanner.hasUsage(cardID: "claude")
-        let hasCodex = await scanner.hasUsage(cardID: "codex")
+        let now = try XCTUnwrap(OpenUsageISO8601.date(from: "2020-01-02T12:00:00Z"))
+        let hasClaude = await scanner.hasUsage(cardID: "claude", now: now)
+        let hasCodex = await scanner.hasUsage(cardID: "codex", now: now)
         XCTAssertTrue(hasClaude)
         XCTAssertFalse(hasCodex)
     }

@@ -17,6 +17,7 @@ When Z.ai reports your plan name, OpenUsage shows it beside the provider name.
 [Pi sessions](pi.md) recorded with provider `zai` contribute local Usage Trend, Today,
 Yesterday, and Last 30 Days metrics. All four start disabled; enable them in Customize. These
 figures cover Pi activity only, separate from the service's live quota or billing metrics.
+Pi logs alone do not switch on the card; enable both the card and the metrics you want in Customize.
 Local history remains available without a native login or after a failed live request, with a
 warning explaining the unavailable meters. Pi logs do not supply credentials for those meters.
 

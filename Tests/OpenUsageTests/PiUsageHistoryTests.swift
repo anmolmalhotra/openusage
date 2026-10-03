@@ -56,10 +56,71 @@ final class PiUsageHistoryTests: XCTestCase {
         let native = ProviderSnapshot.error(provider: Provider(id: "zai", displayName: "Z.ai", icon: .providerMark("zai")),
                                             error: ZAIAuthError.missingKey)
         let result = PiUsageHistory.appending(pi.build(), to: native, sourceNote: "Pi", now: now)
-        XCTAssertNotNil(result.warning)
+        XCTAssertTrue(result.warning?.contains(ZAIAuthError.missingKey.localizedDescription) == true)
+        XCTAssertTrue(result.warning?.contains("Usage totals are unavailable for unknown models: unknown.") == true)
         XCTAssertNil(result.errorCategory)
         XCTAssertFalse(result.lines.contains(where: \.isError))
         XCTAssertEqual(result.usageHistory?.unknownModelsByDay[day], ["unknown"])
+    }
+    
+    func testUnknownOnlyHistoryWarnsWithAndWithoutNativeMeters() {
+        let day = DailyUsageAccumulator.dayKey(from: now)
+        var pi = DailyUsageAccumulator()
+        pi.addUnknownModel(day: day, model: "unknown-b")
+        pi.addUnknownModel(day: day, model: "unknown-a")
+        let meter = MetricLine.progress(label: "Session", used: 25, limit: 100, format: .percent)
+        for nativeLines in [[], [meter]] {
+            let snapshot = ProviderSnapshot(providerID: "grok", displayName: "Grok", lines: nativeLines)
+            let result = PiUsageHistory.appending(pi.build(), to: snapshot, sourceNote: "Pi", now: now)
+            XCTAssertEqual(result.warning, "Usage totals are unavailable for unknown models: unknown-a, unknown-b.")
+            XCTAssertEqual(result.line(label: "Session"), nativeLines.first)
+            XCTAssertNil(result.line(label: "Today"), "Unknown usage must not fabricate zero totals")
+        }
+    }
+    
+    func testUnknownOnlyNoticeIsReplacedAndClearedWithoutLosingLiveWarning() {
+        let day = DailyUsageAccumulator.dayKey(from: now)
+        let descriptor = UsageHistoryDescriptor(scope: .machineLocal, estimatedCost: true, sourceNote: "logs")
+        let unknownHistory = ProviderUsageHistory(series: DailyUsageSeries(daily: []),
+                                                   unknownModelsByDay: [day: ["unknown"]])
+        var snapshot = ProviderSnapshot(providerID: "grok", displayName: "Grok", lines: [],
+                                        warning: "Live usage unavailable")
+        for _ in 0..<2 {
+            snapshot = UsageHistorySnapshotRenderer.render(local: snapshot, history: unknownHistory,
+                                                             descriptor: descriptor, now: now)
+            XCTAssertEqual(snapshot.warning,
+                           "Live usage unavailable\nUsage totals are unavailable for unknown models: unknown.")
+        }
+        let updatedHistory = ProviderUsageHistory(series: DailyUsageSeries(daily: []),
+                                                   unknownModelsByDay: [day: ["new-model"]])
+        snapshot = UsageHistorySnapshotRenderer.render(local: snapshot, history: updatedHistory,
+                                                         descriptor: descriptor, now: now)
+        XCTAssertEqual(snapshot.warning,
+                       "Live usage unavailable\nUsage totals are unavailable for unknown models: new-model.")
+        let removed = UsageHistorySnapshotRenderer.removingHistory(from: snapshot)
+        XCTAssertEqual(removed.warning, "Live usage unavailable")
+        var priced = DailyUsageAccumulator()
+        priced.add(day: day, tokens: 20, cost: 1, model: "known")
+        let rendered = UsageHistorySnapshotRenderer.render(
+            local: snapshot, history: ProviderUsageHistory(series: priced.build().series),
+            descriptor: descriptor, now: now
+        )
+        XCTAssertEqual(rendered.warning, "Live usage unavailable")
+        XCTAssertNotNil(rendered.line(label: "Today"))
+    }
+    
+    func testPricedUsageKeepsExistingPerRowUnknownModelWarning() {
+        let day = DailyUsageAccumulator.dayKey(from: now)
+        var pi = DailyUsageAccumulator()
+        pi.add(day: day, tokens: 20, cost: 1, model: "known")
+        pi.addUnknownModel(day: day, model: "unknown")
+        let snapshot = ProviderSnapshot(providerID: "grok", displayName: "Grok", lines: [])
+        let result = PiUsageHistory.appending(pi.build(), to: snapshot, sourceNote: "Pi", now: now)
+        XCTAssertNil(result.warning)
+        guard case .values(_, _, _, _, let models, _) = result.line(label: "Today") else {
+            return XCTFail("Expected a spend row")
+        }
+        XCTAssertEqual(models, ["unknown"])
     }
     
     func testNewMetricsAreDisabledUnpinnedAndOrderedAfterExistingMetrics() {

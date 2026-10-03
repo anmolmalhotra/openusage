@@ -89,7 +89,7 @@ final class CodexProvider: ProviderRuntime {
         let keychain = await loadOffMainActor { [authStore] in authStore.loadKeychainAuth() }
         if keychain?.hasUsableAccessToken == true { return true }
         guard allowsUnattributedHistory else { return false }
-        return await piUsageScanner.hasUsage(cardID: "codex")
+        return await piUsageScanner.hasUsage(cardID: "codex", now: now())
     }
 
     func refresh() async -> ProviderSnapshot {
@@ -203,10 +203,12 @@ final class CodexProvider: ProviderRuntime {
         }
         // Pending history is not evidence of no usage. The store may restore last-good spend rows.
         if history != nil { MetricLine.appendNoDataIfNeeded(&mapped.lines) }
-        return ProviderSnapshot.make(
+        let snapshot = ProviderSnapshot.make(
             provider: provider, plan: mapped.plan, lines: mapped.lines, refreshedAt: now(),
             usageHistory: history?.usageHistory, warning: warning ?? historyWarning
         )
+        guard let usage = history?.usageHistory else { return snapshot }
+        return UsageHistorySnapshotRenderer.applyingPricingWarning(to: snapshot, history: usage)
     }
 
     private struct CodexLocalHistory: Sendable {

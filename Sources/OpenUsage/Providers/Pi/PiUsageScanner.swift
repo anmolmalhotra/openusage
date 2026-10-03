@@ -25,7 +25,7 @@ actor PiUsageScanner {
 
     private static let sharedScanner = IncrementalJSONLScanner<Entry>(
         logTag: LogTag.plugin("pi"),
-        persistence: JSONLScanCachePersistence(namespace: "pi", schemaVersion: 3)
+        persistence: JSONLScanCachePersistence(namespace: "pi", schemaVersion: 4)
     )
 
     static func flushPersistentCacheWrites() async {
@@ -42,7 +42,7 @@ actor PiUsageScanner {
         self.scanner = incrementalScanner ?? Self.sharedScanner
     }
 
-    /// One parsed assistant-message usage line. Raw timestamp is kept so a cached parse stays valid as
+    /// One parsed model-attributed usage record. Raw timestamp is kept so a cached parse stays valid as
     /// the window slides; `cardID` is resolved at parse time so aggregation is a cheap filter.
     struct Entry: Codable, Sendable, Equatable {
         var id: String?
@@ -77,10 +77,10 @@ actor PiUsageScanner {
     }
     
     /// The same local transcript parser powers detection and refresh; no credentials or network calls.
-    func hasUsage(cardID: String) async -> Bool {
-        guard let entries = await parsedEntries(since: .distantPast), !Task.isCancelled else { return false }
-        let now = Date()
-        return entries.contains { $0.cardID == cardID && $0.timestamp <= now }
+    func hasUsage(cardID: String, daysBack: Int = 30, now: Date = Date()) async -> Bool {
+        let since = JSONLScanning.sinceDate(daysBack: daysBack, now: now)
+        guard let entries = await parsedEntries(since: since), !Task.isCancelled else { return false }
+        return entries.contains { $0.cardID == cardID && $0.timestamp >= since && $0.timestamp <= now }
     }
     
     private func parsedEntries(since: Date) async -> [Entry]? {
@@ -105,6 +105,7 @@ actor PiUsageScanner {
         var sourcePath: String?
         var sessionID: String?
         var parentPath: String?
+        var warnedUnattributedSummary = false
         
         init(sourcePath: String? = nil) {
             self.sourcePath = sourcePath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
@@ -119,6 +120,7 @@ actor PiUsageScanner {
     static func parseFile(_ data: Data, state: inout ParseState) -> [Entry] {
         let usageMarker = Data(#""usage""#.utf8)
         let sessionMarker = Data(#""session""#.utf8)
+        let summaryMarkers = [Data(#""compaction""#.utf8), Data(#""branch_summary""#.utf8)]
         var entries: [Entry] = []
         for line in data.split(separator: UInt8(ascii: "\n")) {
             if line.range(of: sessionMarker) != nil,
@@ -126,6 +128,17 @@ actor PiUsageScanner {
                object["type"] as? String == "session" {
                 state.sessionID = trimmedString(object["id"])
                 state.parentPath = parentPath(from: object, sourcePath: state.sourcePath)
+                continue
+            }
+            if line.range(of: usageMarker) != nil,
+               summaryMarkers.contains(where: { line.range(of: $0) != nil }),
+               let object = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any],
+               let type = object["type"] as? String, ["compaction", "branch_summary"].contains(type),
+               object["usage"] is [String: Any] {
+                if !state.warnedUnattributedSummary {
+                    AppLog.warn(LogTag.plugin("pi"), "Skipped Pi summary usage without reliable provider attribution; local spend may be incomplete")
+                    state.warnedUnattributedSummary = true
+                }
                 continue
             }
             guard line.range(of: usageMarker) != nil,
@@ -140,14 +153,25 @@ actor PiUsageScanner {
 
     static func parseLine(_ data: Data, sessionID: String? = nil) -> Entry? {
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              object["type"] as? String == "message",
               let timestampRaw = object["timestamp"] as? String,
-              let timestamp = OpenUsageISO8601.date(from: timestampRaw),
-              let message = object["message"] as? [String: Any],
-              message["role"] as? String == "assistant",
-              let providerID = trimmedString(message["provider"]),
+              let timestamp = OpenUsageISO8601.date(from: timestampRaw)
+        else { return nil }
+        let attribution: [String: Any]
+        switch object["type"] as? String {
+        case "message":
+            guard let message = object["message"] as? [String: Any],
+                  message["role"] as? String == "assistant"
+            else { return nil }
+            attribution = message
+        case "usage":
+            // Pi's kind identifies the operation, not the format. Future kinds carry ordinary usage.
+            attribution = object
+        default:
+            return nil
+        }
+        guard let providerID = trimmedString(attribution["provider"]),
               let cardID = PiProviderMapping.cardID(forPiProvider: providerID),
-              let usage = message["usage"] as? [String: Any]
+              let usage = attribution["usage"] as? [String: Any]
         else { return nil }
 
         guard let input = tokenCount(usage["input"]),
@@ -191,7 +215,7 @@ actor PiUsageScanner {
             sessionID: session,
             timestamp: timestamp,
             cardID: cardID,
-            model: trimmedString(message["model"]) ?? trimmedString(message["responseModel"]) ?? "",
+            model: trimmedString(attribution["model"]) ?? trimmedString(attribution["responseModel"]) ?? "",
             carriedCost: carriedCost.flatMap { $0 > 0 ? $0 : nil },
             tokens: tokens,
             reportedTotalTokens: reportedTotal > 0 ? reportedTotal : total

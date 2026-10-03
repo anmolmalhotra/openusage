@@ -196,6 +196,52 @@ final class PiAccountProviderTests: XCTestCase {
         XCTAssertNil(snapshot.usageHistory)
     }
     
+    func testUnknownOnlyCodexPiHistoryWarnsWithoutPeerAggregation() async throws {
+        let directory = try fixture(provider: "openai", cost: 0)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let provider = codex(directory: directory)
+        let failedLive = await provider.refresh()
+        XCTAssertNil(failedLive.errorCategory)
+        XCTAssertTrue(failedLive.warning?.contains("Usage totals are unavailable for unknown models: test-model.") == true)
+        XCTAssertTrue(failedLive.usageHistory?.series.daily.isEmpty == true)
+        let meter = MetricLine.progress(label: "Session", used: 25, limit: 100, format: .percent)
+        let successfulLive = await provider.snapshot(mapped: CodexMappedUsage(plan: "Pro", lines: [meter]))
+        XCTAssertEqual(successfulLive.warning, "Usage totals are unavailable for unknown models: test-model.")
+        XCTAssertEqual(successfulLive.line(label: "Session"), meter)
+        XCTAssertNil(successfulLive.line(label: "Today"))
+    }
+    
+    func testUnknownOnlyClaudePiHistoryWarnsWithAndWithoutLiveQuota() async throws {
+        let directory = try fixture(provider: "anthropic", cost: 0)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for signedIn in [true, false] {
+            let credentials = signedIn ? [
+                directory.appendingPathComponent(".credentials.json").path:
+                    #"{"claudeAiOauth":{"accessToken":"fixture","scopes":["user:profile"]}}"#
+            ] : [:]
+            let provider = ClaudeProvider(
+                authStore: ClaudeAuthStore(
+                    environment: FakeEnvironment(["CLAUDE_CONFIG_DIR": directory.path]),
+                    files: FakeFiles(credentials), keychain: FakeKeychain(), now: { [now] in now }
+                ),
+                usageClient: ClaudeUsageClient(httpClient: FakeHTTPClient(response: HTTPResponse(
+                    statusCode: 200, headers: [:],
+                    body: Data(#"{"five_hour":{"utilization":25}}"#.utf8)
+                ))),
+                logUsageScanner: ClaudeLogFixture.scanner(home: nil),
+                piUsageScanner: scanner(directory), now: { [now] in now }, pricing: { .empty }
+            )
+            let snapshot = await provider.refresh()
+            XCTAssertNil(snapshot.errorCategory)
+            XCTAssertTrue(snapshot.warning?.contains("Usage totals are unavailable for unknown models: test-model.") == true)
+            XCTAssertTrue(snapshot.usageHistory?.series.daily.isEmpty == true)
+            XCTAssertNil(snapshot.line(label: "Today"))
+            if signedIn {
+                XCTAssertNotNil(snapshot.line(label: "Session"))
+            }
+        }
+    }
+    
     private func normalizedHistory(_ history: ProviderUsageHistory?) -> ProviderUsageHistory? {
         guard var history else { return nil }
         if let series = history.modelUsage {
@@ -225,14 +271,14 @@ final class PiAccountProviderTests: XCTestCase {
         )
     }
     
-    private func fixture(provider: String) throws -> URL {
+    private func fixture(provider: String, cost: Double = 0.25) throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PiAccount-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let message: [String: Any] = [
             "type": "message", "id": "message", "timestamp": "2026-02-20T14:00:00Z",
             "message": [
                 "role": "assistant", "provider": provider, "model": "test-model",
-                "usage": ["input": 10, "output": 5, "cost": ["total": 0.25]]
+                "usage": ["input": 10, "output": 5, "cost": ["total": cost]]
             ]
         ]
         try JSONSerialization.data(withJSONObject: message).write(to: directory.appendingPathComponent("session.jsonl"))

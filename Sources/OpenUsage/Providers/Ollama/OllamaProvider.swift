@@ -68,11 +68,9 @@ final class OllamaProvider: ProviderRuntime {
         ] + WidgetDescriptor.spendTiles(provider: provider)
     }
 
-    /// The signing key alone does not prove an Ollama Cloud account is linked. Keep Cloud opt-in,
-    /// but detect actual pi sessions because those can populate local history without Cloud access.
-    func hasLocalCredentials() async -> Bool {
-        await piUsageScanner.hasUsage(cardID: provider.id)
-    }
+    /// The signing key alone does not prove an Ollama Cloud account is linked. Keep Cloud opt-in.
+    /// Pi history is also opt-in, so local sessions alone must not enable this card.
+    func hasLocalCredentials() async -> Bool { false }
 
     func refresh() async -> ProviderSnapshot {
         let snapshot = await refreshNative()

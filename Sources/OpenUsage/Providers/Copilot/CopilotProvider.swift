@@ -67,8 +67,8 @@ final class CopilotProvider: ProviderRuntime {
 
     func hasLocalCredentials() async -> Bool {
         // Same source as `refresh()`: editor config, gh config, or the gh keychain entry.
-        if await loadOffMainActor({ [authStore] in authStore.loadToken() }) != nil { return true }
-        return await piUsageScanner.hasUsage(cardID: provider.id)
+        // Pi history is opt-in, so local sessions alone must not enable this card.
+        return await loadOffMainActor { [authStore] in authStore.loadToken() } != nil
     }
 
     func refresh() async -> ProviderSnapshot {

@@ -14,7 +14,7 @@ import XCTest
 final class PiQuotaProviderTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_784_000_000)
     
-    func testLocalSessionsPopulateMatchingCardsWithoutNativeCredentials() async throws {
+    func testPiOnlySessionsRequireOptInButStillPopulateMatchingCards() async throws {
         let fixture = try makeScanner(providers: ["github-copilot", "ollama", "zai"])
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let instant = now
@@ -34,13 +34,32 @@ final class PiQuotaProviderTests: XCTestCase {
         ]
         for provider in providers {
             let detected = await provider.hasLocalCredentials()
-            XCTAssertTrue(detected, provider.provider.id)
+            XCTAssertFalse(detected, provider.provider.id)
             let snapshot = await provider.refresh()
             XCTAssertNil(snapshot.errorCategory, provider.provider.id)
             XCTAssertNotNil(snapshot.warning, provider.provider.id)
             XCTAssertFalse(snapshot.lines.contains { $0.isError }, provider.provider.id)
             XCTAssertEqual(snapshot.usageHistory?.series.daily.first?.costUSD, 0.5, provider.provider.id)
             XCTAssertEqual(snapshot.usageHistory?.series.daily.first?.totalTokens, 150, provider.provider.id)
+        }
+    }
+    
+    func testNativeCredentialsStillEnableCopilotAndZAIWithoutPiUsage() async throws {
+        let fixture = try makeScanner(providers: [])
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let providers: [any ProviderRuntime] = [
+            CopilotProvider(
+                authStore: CopilotAuthStore(files: FakeFiles(), keychain: FakeKeychain("gho-test")),
+                piUsageScanner: fixture.scanner
+            ),
+            ZAIProvider(
+                authStore: ZAIAuthStore(files: FakeFiles(), environment: FakeEnvironment(["ZAI_API_KEY": "test-key"])),
+                piUsageScanner: fixture.scanner
+            )
+        ]
+        for provider in providers {
+            let detected = await provider.hasLocalCredentials()
+            XCTAssertTrue(detected, provider.provider.id)
         }
     }
     

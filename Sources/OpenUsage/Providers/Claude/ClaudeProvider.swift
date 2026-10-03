@@ -109,7 +109,7 @@ final class ClaudeProvider: ProviderRuntime {
         if load.candidates.contains(where: \.hasUsableAccessToken) { return true }
         if load.desktopStatus == .permissionRequired || load.desktopStatus == .stale { return true }
         guard allowsUnattributedPiUsage else { return false }
-        return await piUsageScanner.hasUsage(cardID: "claude")
+        return await piUsageScanner.hasUsage(cardID: "claude", now: now())
     }
 
     func refresh() async -> ProviderSnapshot {
@@ -350,7 +350,7 @@ final class ClaudeProvider: ProviderRuntime {
         }
 
         MetricLine.appendNoDataIfNeeded(&mapped.lines)
-        return ProviderSnapshot.make(
+        let snapshot = ProviderSnapshot.make(
             provider: provider,
             plan: mapped.plan,
             lines: mapped.lines,
@@ -358,6 +358,8 @@ final class ClaudeProvider: ProviderRuntime {
             usageHistory: usageHistory,
             warning: warning
         )
+        guard let usageHistory else { return snapshot }
+        return UsageHistorySnapshotRenderer.applyingPricingWarning(to: snapshot, history: usageHistory)
     }
 
     private func fetchLiveUsage(

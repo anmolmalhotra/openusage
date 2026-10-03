@@ -6,10 +6,11 @@ How OpenUsage decides which providers start on, what happens when an update adds
 
 A fresh install doesn't turn on every provider OpenUsage knows about. It starts with Claude, Codex, and Cursor, then quickly checks which providers have credentials available on your Mac — an existing local login, saved API key, or supported environment variable; nothing is sent anywhere — and switches to exactly that set. All providers are checked at once, so detection takes as long as the slowest single check, not the sum of them. If nothing is found, the Claude/Codex/Cursor starter set stays. Providers the check turns on are fetched right away, so they appear with data instead of waiting for the next scheduled refresh. See [Dashboard § First launch](dashboard.md#first-launch) for how the dashboard presents this.
 
-Supported [Pi session logs](providers/pi.md) also count as a local footprint for providers whose
-history consumes them, even without a native login. This enables local spending, not access to live
-subscription limits. Copilot, Ollama, and Z.ai's new Pi history metrics start disabled and must be
-enabled separately in Customize. Adding Pi support does not re-enable a provider you already turned off.
+Supported [Pi session logs](providers/pi.md) from the last 30 days also count as a local footprint for
+Claude, Codex, Grok, Antigravity, and OpenCode, subject to their account safeguards. This enables local
+spending, not access to live subscription limits. Pi logs alone do not switch on Copilot, Ollama, or
+Z.ai because their Pi history metrics start disabled. Enable those cards and their history metrics in
+Customize when you want them. Adding Pi support does not re-enable a provider you already turned off.
 
 ## When an update adds a new provider
 

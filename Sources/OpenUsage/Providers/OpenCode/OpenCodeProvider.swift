@@ -117,7 +117,7 @@ final class OpenCodeProvider: ProviderRuntime {
             return usageScanner.hasHostedUsage()
         }
         if hasNativeCredentials { return true }
-        return await piUsageScanner.hasUsage(cardID: provider.id)
+        return await piUsageScanner.hasUsage(cardID: provider.id, now: now())
     }
 
     func refresh() async -> ProviderSnapshot {
