@@ -246,6 +246,7 @@ final class ZAIProviderTests: XCTestCase {
                 }
                 return jsonResponse(subscriptionJSON)
             }),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { Date(timeIntervalSince1970: 1_800_000_000) }
         )
 
@@ -267,7 +268,8 @@ final class ZAIProviderTests: XCTestCase {
                     return jsonResponse(quotaBothLimitsJSON)
                 }
                 return HTTPResponse(statusCode: 500, headers: [:], body: Data("{}".utf8))
-            })
+            }),
+            piUsageScanner: PiUsageFixture.emptyScanner()
         )
 
         let snapshot = await provider.refresh()
@@ -284,7 +286,8 @@ final class ZAIProviderTests: XCTestCase {
             usageClient: ZAIUsageClient(http: RoutingHTTPClient { _ in
                 XCTFail("should not hit the network without a key")
                 return jsonResponse("{}")
-            })
+            }),
+            piUsageScanner: PiUsageFixture.emptyScanner()
         )
 
         let snapshot = await provider.refresh()
@@ -303,7 +306,8 @@ final class ZAIProviderTests: XCTestCase {
                     request.url == ZAIUsageClient.quotaURL
                         ? HTTPResponse(statusCode: entry.status, headers: [:], body: Data("{}".utf8))
                         : jsonResponse(subscriptionJSON)
-                })
+                }),
+                piUsageScanner: PiUsageFixture.emptyScanner()
             )
 
             let snapshot = await provider.refresh()
@@ -317,7 +321,8 @@ final class ZAIProviderTests: XCTestCase {
             authStore: makeAuthStore(key: "zai-test"),
             usageClient: ZAIUsageClient(http: RoutingHTTPClient { _ in
                 throw ZAIUsageError.connectionFailed
-            })
+            }),
+            piUsageScanner: PiUsageFixture.emptyScanner()
         )
 
         let snapshot = await provider.refresh()
@@ -335,7 +340,8 @@ final class ZAIProviderTests: XCTestCase {
                     return jsonResponse(#"{"code":500,"msg":"当前用户不存在coding plan","success":false}"#)
                 }
                 return jsonResponse(subscriptionJSON)
-            })
+            }),
+            piUsageScanner: PiUsageFixture.emptyScanner()
         )
 
         let snapshot = await provider.refresh()
@@ -352,7 +358,8 @@ final class ZAIProviderTests: XCTestCase {
         let files = FakeFiles()
         let provider = ZAIProvider(
             authStore: ZAIAuthStore(files: files, environment: FakeEnvironment(["ZAI_API_KEY": "zai-env"])),
-            usageClient: ZAIUsageClient(http: RoutingHTTPClient { _ in jsonResponse("{}") })
+            usageClient: ZAIUsageClient(http: RoutingHTTPClient { _ in jsonResponse("{}") }),
+            piUsageScanner: PiUsageFixture.emptyScanner()
         )
 
         XCTAssertEqual(provider.apiKeyStatus, .fromEnvironment)
@@ -367,7 +374,7 @@ final class ZAIProviderTests: XCTestCase {
     }
 
     func testProviderIdentityAndLinks() {
-        let provider = ZAIProvider()
+        let provider = ZAIProvider(piUsageScanner: PiUsageFixture.emptyScanner())
         XCTAssertEqual(provider.provider.id, "zai")
         XCTAssertEqual(provider.provider.displayName, "Z.ai")
     }

@@ -19,6 +19,7 @@ final class ClaudeProvider: ProviderRuntime {
     let authStore: ClaudeAuthStore
     let usageClient: ClaudeUsageClient
     let logUsageScanner: ClaudeLogUsageScanner
+    let piUsageScanner: PiUsageScanner
     let allowsUnattributedPiUsage: Bool
     let now: @Sendable () -> Date
     let pricing: @Sendable () async -> ModelPricing
@@ -57,6 +58,7 @@ final class ClaudeProvider: ProviderRuntime {
         authStore: ClaudeAuthStore = ClaudeAuthStore(),
         usageClient: ClaudeUsageClient = ClaudeUsageClient(),
         logUsageScanner: ClaudeLogUsageScanner = ClaudeLogUsageScanner(),
+        piUsageScanner: PiUsageScanner = PiUsageScanner(),
         allowsUnattributedPiUsage: Bool = true,
         now: @escaping @Sendable () -> Date = Date.init,
         pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
@@ -65,6 +67,7 @@ final class ClaudeProvider: ProviderRuntime {
         self.authStore = authStore
         self.usageClient = usageClient
         self.logUsageScanner = logUsageScanner
+        self.piUsageScanner = piUsageScanner
         self.allowsUnattributedPiUsage = allowsUnattributedPiUsage
         self.now = now
         self.pricing = pricing
@@ -104,15 +107,28 @@ final class ClaudeProvider: ProviderRuntime {
         // material still counts as a local login; the first manual refresh requests access if needed.
         let load = await loadOffMainActor { [authStore] in authStore.loadCredentialSet() }
         if load.candidates.contains(where: \.hasUsableAccessToken) { return true }
-        return load.desktopStatus == .permissionRequired || load.desktopStatus == .stale
+        if load.desktopStatus == .permissionRequired || load.desktopStatus == .stale { return true }
+        guard allowsUnattributedPiUsage else { return false }
+        return await piUsageScanner.hasUsage(cardID: "claude", now: now())
     }
 
     func refresh() async -> ProviderSnapshot {
-        await refresh(
+        let snapshot = await refresh(
             credentialReloadsRemaining: 1,
             forceDesktopFallback: false,
             previousFallbackError: nil
         )
+        guard snapshot.errorCategory != nil, allowsUnattributedPiUsage else { return snapshot }
+        guard case .badge(_, let message, _, _) = snapshot.lines.first(where: \.isError) else { return snapshot }
+        let local = await snapshotWithLocalUsage(
+            mapped: ClaudeMappedUsage(plan: nil, lines: []),
+            warning: message
+        )
+        guard let history = local.usageHistory,
+              history.series.daily.contains(where: { $0.totalTokens > 0 || ($0.costUSD ?? 0) > 0 })
+                || !history.unknownModelsByDay.isEmpty
+        else { return snapshot }
+        return local
     }
 
     /// Claude Code can replace a login while a request is in flight. Reload once when that happens so
@@ -310,7 +326,7 @@ final class ClaudeProvider: ProviderRuntime {
         let pricing = await pricing()
         let nativeScan = await logUsageScanner.scan(now: now(), pricing: pricing)
         let piScan = allowsUnattributedPiUsage
-            ? await PiUsageScanner.shared.scan(cardID: provider.id, now: now(), pricing: pricing)
+            ? await piUsageScanner.scan(cardID: "claude", now: now(), pricing: pricing)
             : nil
         var usageHistory: ProviderUsageHistory?
         // Cancellation can land between the native and pi scans. Treat the pair as one unit so a
@@ -334,7 +350,7 @@ final class ClaudeProvider: ProviderRuntime {
         }
 
         MetricLine.appendNoDataIfNeeded(&mapped.lines)
-        return ProviderSnapshot.make(
+        let snapshot = ProviderSnapshot.make(
             provider: provider,
             plan: mapped.plan,
             lines: mapped.lines,
@@ -342,6 +358,8 @@ final class ClaudeProvider: ProviderRuntime {
             usageHistory: usageHistory,
             warning: warning
         )
+        guard let usageHistory else { return snapshot }
+        return UsageHistorySnapshotRenderer.applyingPricingWarning(to: snapshot, history: usageHistory)
     }
 
     private func fetchLiveUsage(

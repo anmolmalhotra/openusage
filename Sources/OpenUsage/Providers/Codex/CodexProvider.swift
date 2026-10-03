@@ -19,6 +19,7 @@ final class CodexProvider: ProviderRuntime {
     let authStore: CodexAuthStore
     let usageClient: CodexUsageClient
     let logUsageScanner: CodexLogUsageScanner
+    let piUsageScanner: PiUsageScanner
     let openCodeUsageScanner: OpenCodeCodexUsageScanner
     let now: @Sendable () -> Date
     let pricing: @Sendable () async -> ModelPricing
@@ -30,6 +31,7 @@ final class CodexProvider: ProviderRuntime {
         authStore: CodexAuthStore = CodexAuthStore(),
         usageClient: CodexUsageClient = CodexUsageClient(),
         logUsageScanner: CodexLogUsageScanner = CodexLogUsageScanner(),
+        piUsageScanner: PiUsageScanner = PiUsageScanner(),
         openCodeUsageScanner: OpenCodeCodexUsageScanner = OpenCodeCodexUsageScanner(),
         allowsUnattributedHistory: Bool = true,
         now: @escaping @Sendable () -> Date = Date.init,
@@ -42,6 +44,7 @@ final class CodexProvider: ProviderRuntime {
         self.authStore = authStore
         self.usageClient = usageClient
         self.logUsageScanner = logUsageScanner
+        self.piUsageScanner = piUsageScanner
         self.openCodeUsageScanner = openCodeUsageScanner
         self.now = now
         self.pricing = pricing
@@ -78,16 +81,30 @@ final class CodexProvider: ProviderRuntime {
     func hasLocalCredentials() async -> Bool {
         // Same sources as `refresh()`: auth.json candidates first, keychain as the fallback. Only a
         // usable access token counts (see `hasUsableAccessToken`) — an API-key-only auth.json can't
-        // serve the usage API, so seeding it on would just show an error row.
+        // serve the usage API. Pi transcripts can independently support a local-history-only card.
         let fileCandidates = authStore.loadAuthCandidates()
         if fileCandidates.contains(where: \.hasUsableAccessToken) {
             return true
         }
         let keychain = await loadOffMainActor { [authStore] in authStore.loadKeychainAuth() }
-        return keychain?.hasUsableAccessToken == true
+        if keychain?.hasUsableAccessToken == true { return true }
+        guard allowsUnattributedHistory else { return false }
+        return await piUsageScanner.hasUsage(cardID: "codex", now: now())
     }
 
     func refresh() async -> ProviderSnapshot {
+        let snapshot = await refreshNativeUsage()
+        guard snapshot.errorCategory != nil, allowsUnattributedHistory else { return snapshot }
+        guard case .badge(_, let message, _, _) = snapshot.lines.first(where: \.isError) else { return snapshot }
+        let local = await self.snapshot(mapped: CodexMappedUsage(plan: nil, lines: []), warning: message)
+        guard let history = local.usageHistory,
+              history.series.daily.contains(where: { $0.totalTokens > 0 || ($0.costUSD ?? 0) > 0 })
+                || !history.unknownModelsByDay.isEmpty
+        else { return snapshot }
+        return local
+    }
+    
+    private func refreshNativeUsage() async -> ProviderSnapshot {
         if authStore.expectedIdentity != nil { return await refreshAccount() }
         let fileCandidates = authStore.loadAuthCandidates()
         var lastFallbackError: Error?
@@ -156,14 +173,15 @@ final class CodexProvider: ProviderRuntime {
         return await snapshot(mapped: mapped)
     }
 
-    func snapshot(mapped initial: CodexMappedUsage) async -> ProviderSnapshot {
+    func snapshot(mapped initial: CodexMappedUsage, warning: String? = nil) async -> ProviderSnapshot {
         var mapped = initial
         let history = await localHistory.value(wait: localHistoryWait) {
-            [pricing, fallbackModel, logUsageScanner, openCodeUsageScanner, allowsUnattributedHistory, provider, now] in
+            [pricing, fallbackModel, logUsageScanner, piUsageScanner, openCodeUsageScanner, allowsUnattributedHistory, now] in
             await Self.scanLocalHistory(
                 pricing: pricing, fallbackModel: fallbackModel, logUsageScanner: logUsageScanner,
+                piUsageScanner: piUsageScanner,
                 openCodeUsageScanner: openCodeUsageScanner, allowsUnattributedHistory: allowsUnattributedHistory,
-                provider: provider, now: now
+                now: now
             )
         }
         if let history, let usage = history.usageHistory {
@@ -179,16 +197,18 @@ final class CodexProvider: ProviderRuntime {
                 fallbackPricingModelsByDay: usage.fallbackPricingModelsByDay
             )
         }
-        let warning = history == nil ? "Local token history is still updating." : nil
-        if warning != nil {
+        let historyWarning = history == nil ? "Local token history is still updating." : nil
+        if historyWarning != nil {
             AppLog.warn(LogTag.plugin("codex"), "local history scan deferred; publishing live quota")
         }
         // Pending history is not evidence of no usage. The store may restore last-good spend rows.
         if history != nil { MetricLine.appendNoDataIfNeeded(&mapped.lines) }
-        return ProviderSnapshot.make(
+        let snapshot = ProviderSnapshot.make(
             provider: provider, plan: mapped.plan, lines: mapped.lines, refreshedAt: now(),
-            usageHistory: history?.usageHistory, warning: warning
+            usageHistory: history?.usageHistory, warning: warning ?? historyWarning
         )
+        guard let usage = history?.usageHistory else { return snapshot }
+        return UsageHistorySnapshotRenderer.applyingPricingWarning(to: snapshot, history: usage)
     }
 
     private struct CodexLocalHistory: Sendable {
@@ -200,9 +220,9 @@ final class CodexProvider: ProviderRuntime {
         pricing: @Sendable () async -> ModelPricing,
         fallbackModel: @MainActor () -> String?,
         logUsageScanner: CodexLogUsageScanner,
+        piUsageScanner: PiUsageScanner,
         openCodeUsageScanner: OpenCodeCodexUsageScanner,
         allowsUnattributedHistory: Bool,
-        provider: Provider,
         now: @Sendable () -> Date
     ) async -> CodexLocalHistory {
         let pricing = await pricing()
@@ -212,8 +232,8 @@ final class CodexProvider: ProviderRuntime {
         async let native = logUsageScanner.scan(
             now: now(), pricing: pricing, fallbackModel: selectedFallbackModel
         )
-        async let pi = allowsUnattributedHistory ? PiUsageScanner.shared.scan(
-            cardID: provider.id, now: now(), pricing: pricing,
+        async let pi = allowsUnattributedHistory ? piUsageScanner.scan(
+            cardID: "codex", now: now(), pricing: pricing,
             estimateCost: { CodexUsagePricing.estimatedCost(pricing: pricing, model: $0, tokens: $1) }
         )
             : nil

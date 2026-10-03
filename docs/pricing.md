@@ -1,6 +1,6 @@
 # Model Pricing
 
-How OpenUsage turns token counts into the estimated dollars on the Claude, Codex, Cursor, and Grok spend tiles. Grok uses the cost recorded in its session logs when available and only estimates older turns without one. OpenRouter and OpenCode do not use these estimates because their sources already report the cost directly.
+How OpenUsage turns token counts into the estimated dollars on local spend tiles. Grok and native OpenCode logs use their recorded costs when available. OpenRouter's API reports costs directly. [Pi usage](providers/pi.md) uses positive recorded costs when present and shared model pricing for missing or zero costs, including Pi history merged into OpenCode.
 
 ## Where prices come from
 
@@ -26,7 +26,7 @@ Gemini 3.8 Flash includes Cursor effort variants such as `gemini-3.8-flash-high`
 
 Muse Spark 1.3 uses the same rates at every Cursor effort level: Minimal, Low, Medium, High, Extra High (`xhigh` or `extra-high`), and Max. The bundled rates match [Cursor's pricing](https://cursor.com/docs/models-and-pricing.md): $1.25 input and cache writes, $0.15 cache reads, and $4.25 output per million tokens, with no long-context surcharge. All efforts count toward spend and group under `muse-spark-1.3` in the model breakdown, even before the first pricing refresh. Contributor variants have separate pricing and are not included in these aliases.
 
-A model no source can price is left out of the spend figures unless its session already records the actual cost. Otherwise, its tokens don't count toward the day's tile, the Usage Trend, or the model breakdown, because a token count next to a dollar figure that ignores part of it would be misleading. A warning triangle on the affected tiles lists the unpriced models, and a day where nothing could be priced reads "No data".
+A model no source can price is left out of the spend figures unless its session already records the actual cost. Otherwise, its tokens don't count toward the day's tile, the Usage Trend, or the model breakdown, because a token count next to a dollar figure that ignores part of it would be misleading. A warning triangle on the affected tiles lists the unpriced models, and a day where nothing could be priced reads "No data". If the entire history is unpriced, a provider warning lists the models even when there are no spend rows to display.
 
 Codex offers an optional **Fallback Model** under **Customize → Codex → Cost Estimates**. It defaults to **None**, which keeps the behavior above. Choosing a model estimates otherwise-unpriced local usage at that model's rates, including cached input, long-context requests, and the session's speed tier. Known prices still win. The unknown-model warning triangle and its tooltip stay visible: a fallback estimates the cost but does not establish the model's own price. Changing the choice recalculates the local history, including earlier days; it does not change the model used by Codex. Choosing **None** excludes unpriced usage again. The model breakdown and trend source note identify fallback estimates only for the days shown. Estimates outside the history window do not affect these notes. Synced history keeps the estimates made on each source Mac; this preference does not reprice another Mac's history.
 

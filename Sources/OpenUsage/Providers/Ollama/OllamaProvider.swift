@@ -18,15 +18,21 @@ final class OllamaProvider: ProviderRuntime {
 
     let authStore: OllamaAuthStore
     let usageClient: OllamaUsageClient
+    let piUsageScanner: PiUsageScanner
+    let pricing: @Sendable () async -> ModelPricing
     let now: @Sendable () -> Date
 
     init(
         authStore: OllamaAuthStore = OllamaAuthStore(),
         usageClient: OllamaUsageClient = OllamaUsageClient(),
-        now: @escaping @Sendable () -> Date = Date.init
+        piUsageScanner: PiUsageScanner = PiUsageScanner(),
+        now: @escaping @Sendable () -> Date = Date.init,
+        pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
         self.authStore = authStore
         self.usageClient = usageClient
+        self.piUsageScanner = piUsageScanner
+        self.pricing = pricing
         self.now = now
     }
 
@@ -52,22 +58,30 @@ final class OllamaProvider: ProviderRuntime {
             // still sit at $0.00, so the "No usage in this period" hover would be plainly wrong.
             .values(id: "ollama.last4Weeks", provider: provider, title: "Last 4 Weeks",
                     metricLabel: "Last 4 Weeks", selection: .kind(.dollars),
-                    valueWord: "spent")
-        ]
+                    valueWord: "spent"),
+            .usageTrend(provider: provider)
+                .exportingHistory(
+                    scope: .machineLocal,
+                    estimatedCost: true,
+                    sourceNote: "From your pi sessions (estimated)"
+                )
+        ] + WidgetDescriptor.spendTiles(provider: provider)
     }
 
-    /// Ollama is opt-in: it never enables itself, so the user turns it on in Customize.
-    ///
-    /// This is the one provider whose local credential cannot answer the question the probe is asking.
-    /// Ollama writes `~/.ollama/id_ed25519` the first time it runs, long before — and whether or not —
-    /// `ollama signin` ever links it to an ollama.com account, and only the network knows whether that
-    /// link exists. Probing the key would therefore auto-enable Ollama for everyone who runs local
-    /// models, handing them a provider card whose entire content is a Cloud sign-in warning for a
-    /// product they don't use. Reporting no credentials is the honest answer to "is Ollama Cloud set up
-    /// here?", and it costs a Cloud subscriber one visit to Customize.
+    /// The signing key alone does not prove an Ollama Cloud account is linked. Keep Cloud opt-in.
+    /// Pi history is also opt-in, so local sessions alone must not enable this card.
     func hasLocalCredentials() async -> Bool { false }
 
     func refresh() async -> ProviderSnapshot {
+        let snapshot = await refreshNative()
+        let refreshedAt = now()
+        let scan = await piUsageScanner.scan(cardID: provider.id, now: refreshedAt, pricing: await pricing())
+        return PiUsageHistory.appending(
+            scan, to: snapshot, sourceNote: "From your pi sessions (estimated)", now: refreshedAt
+        )
+    }
+    
+    private func refreshNative() async -> ProviderSnapshot {
         let key: OllamaSigningKey?
         do {
             key = try await loadOffMainActor { [authStore] in try authStore.loadSigningKey() }

@@ -39,6 +39,7 @@ final class OpenCodeProviderTests: XCTestCase {
             authStore: authStore(files: files),
             usageClient: client ?? okClient(),
             usageScanner: scanner,
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now }
         )
     }

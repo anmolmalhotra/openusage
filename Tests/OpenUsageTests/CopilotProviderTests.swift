@@ -298,7 +298,8 @@ final class CopilotProviderTests: XCTestCase {
     func testNotLoggedInWhenNoToken() async {
         let provider = CopilotProvider(
             authStore: CopilotAuthStore(files: FakeFiles(), keychain: FakeKeychain()),
-            usageClient: CopilotUsageClient(http: FakeHTTPClient(response: ok(makePaidBody())))
+            usageClient: CopilotUsageClient(http: FakeHTTPClient(response: ok(makePaidBody()))),
+            piUsageScanner: PiUsageFixture.emptyScanner()
         )
 
         let snapshot = await provider.refresh()
@@ -309,7 +310,8 @@ final class CopilotProviderTests: XCTestCase {
     func testTokenInvalidOn401() async {
         let provider = CopilotProvider(
             authStore: editorTokenStore(),
-            usageClient: CopilotUsageClient(http: FakeHTTPClient(response: HTTPResponse(statusCode: 401, headers: [:], body: Data())))
+            usageClient: CopilotUsageClient(http: FakeHTTPClient(response: HTTPResponse(statusCode: 401, headers: [:], body: Data()))),
+            piUsageScanner: PiUsageFixture.emptyScanner()
         )
 
         let snapshot = await provider.refresh()
@@ -322,6 +324,7 @@ final class CopilotProviderTests: XCTestCase {
         let provider = CopilotProvider(
             authStore: editorTokenStore(),
             usageClient: CopilotUsageClient(http: http),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { Date(timeIntervalSince1970: 1_800_000_000) }
         )
 
@@ -483,7 +486,8 @@ final class CopilotProviderTests: XCTestCase {
             authStore: editorTokenStore(),
             usageClient: CopilotUsageClient(http: http),
             orgBillingClient: CopilotOrgBillingClient(http: http),
-            defaults: defaults
+            defaults: defaults,
+            piUsageScanner: PiUsageFixture.emptyScanner()
         )
     }
 

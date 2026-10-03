@@ -61,6 +61,7 @@ final class GrokProviderTests: XCTestCase {
             authStore: GrokAuthStore(files: files, now: { now }),
             usageClient: GrokUsageClient(httpClient: httpClient),
             logUsageScanner: noLogScanner(),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
@@ -119,6 +120,7 @@ final class GrokProviderTests: XCTestCase {
             authStore: GrokAuthStore(files: files, now: { now }),
             usageClient: GrokUsageClient(httpClient: httpClient),
             logUsageScanner: noLogScanner(),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
@@ -381,6 +383,7 @@ final class GrokProviderTests: XCTestCase {
             authStore: GrokAuthStore(files: files, now: { now }),
             usageClient: GrokUsageClient(httpClient: httpClient),
             logUsageScanner: scanner ?? noLogScanner(),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )

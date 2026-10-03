@@ -129,6 +129,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
         since: Date,
         cacheIdentity: String = "default",
         initialState: State,
+        initialStateForFile: (@Sendable (String) -> State)? = nil,
         parse: @Sendable @escaping (Data, inout State) -> [Item]?
     ) async -> [Item]? {
         precondition(!cacheIdentity.isEmpty)
@@ -158,6 +159,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
             maxConcurrentParses: maxConcurrentParses,
             permitPool: parsePermitPool,
             initialState: initialState,
+            initialStateForFile: initialStateForFile,
             parse: parse
         )
         guard !Task.isCancelled else { return nil }
@@ -438,6 +440,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
         maxConcurrentParses: Int,
         permitPool: JSONLParsePermitPool,
         initialState: State,
+        initialStateForFile: (@Sendable (String) -> State)? = nil,
         parse: @Sendable @escaping (Data, inout State) -> [Item]?
     ) async -> [(file: JSONLScanning.DiscoveredFile, items: [Item]?, readFailed: Bool, oversizedRecordCount: Int)] {
         await withTaskGroup(
@@ -457,7 +460,7 @@ actor IncrementalJSONLScanner<Item: Codable & Sendable> {
                         do {
                             let streamed = try JSONLStreamingReader.read(
                                 path: file.path,
-                                initialState: initialState,
+                                initialState: initialStateForFile?(file.path) ?? initialState,
                                 parse: parse
                             )
                             result = (index, streamed.items, false, streamed.oversizedRecordCount)

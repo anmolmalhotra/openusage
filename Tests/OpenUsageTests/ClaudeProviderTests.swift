@@ -325,6 +325,7 @@ final class ClaudeProviderTests: XCTestCase {
             ]), now: { now }),
             usageClient: ClaudeUsageClient(httpClient: httpClient),
             logUsageScanner: ClaudeLogFixture.scanner(home: home),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
@@ -356,6 +357,7 @@ final class ClaudeProviderTests: XCTestCase {
             ),
             usageClient: ClaudeUsageClient(httpClient: httpClient),
             logUsageScanner: ClaudeLogFixture.scanner(home: home),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
@@ -401,6 +403,7 @@ final class ClaudeProviderTests: XCTestCase {
                     now: { now }
                 ),
                 logUsageScanner: ClaudeLogFixture.scanner(home: home),
+                piUsageScanner: PiUsageFixture.emptyScanner(),
                 now: { now },
                 pricing: { TestPricing.bundled }
             )
@@ -441,6 +444,7 @@ final class ClaudeProviderTests: XCTestCase {
             ]), now: { now }),
             usageClient: ClaudeUsageClient(httpClient: httpClient),
             logUsageScanner: ClaudeLogFixture.scanner(home: home),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
@@ -518,6 +522,7 @@ final class ClaudeProviderTests: XCTestCase {
             authStore: configuredAuthStore(files: files, now: { now }),
             usageClient: ClaudeUsageClient(httpClient: httpClient),
             logUsageScanner: ClaudeLogFixture.scanner(home: nil),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
@@ -568,6 +573,7 @@ final class ClaudeProviderTests: XCTestCase {
             authStore: authStore,
             usageClient: ClaudeUsageClient(httpClient: httpClient),
             logUsageScanner: ClaudeLogFixture.scanner(home: nil),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
@@ -613,7 +619,8 @@ final class ClaudeProviderTests: XCTestCase {
         }
         let provider = ClaudeProvider(
             authStore: authStore, usageClient: ClaudeUsageClient(httpClient: httpClient),
-            logUsageScanner: ClaudeLogFixture.scanner(home: nil), pricing: { TestPricing.bundled }
+            logUsageScanner: ClaudeLogFixture.scanner(home: nil),
+            piUsageScanner: PiUsageFixture.emptyScanner(), pricing: { TestPricing.bundled }
         )
 
         let first = await provider.refresh()
@@ -651,6 +658,7 @@ final class ClaudeProviderTests: XCTestCase {
             authStore: authStore,
             usageClient: ClaudeUsageClient(httpClient: httpClient),
             logUsageScanner: ClaudeLogFixture.scanner(home: nil),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
@@ -670,6 +678,7 @@ final class ClaudeProviderTests: XCTestCase {
                 ),
                 usageClient: ClaudeUsageClient(httpClient: FakeHTTPClient(response: HTTPResponse(statusCode: 200, headers: [:], body: Data()))),
                 logUsageScanner: ClaudeLogFixture.scanner(home: nil),
+                piUsageScanner: PiUsageFixture.emptyScanner(),
                 pricing: { TestPricing.bundled }
             )
         }
@@ -697,6 +706,7 @@ final class ClaudeProviderTests: XCTestCase {
             ]), now: { now }),
             usageClient: ClaudeUsageClient(httpClient: httpClient),
             logUsageScanner: ClaudeLogFixture.scanner(home: nil),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )
@@ -739,6 +749,7 @@ final class ClaudeProviderTests: XCTestCase {
             ]), now: { clock.now }),
             usageClient: ClaudeUsageClient(httpClient: httpClient),
             logUsageScanner: ClaudeLogFixture.scanner(home: nil),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { clock.now },
             pricing: { TestPricing.bundled }
         )
@@ -783,6 +794,7 @@ final class ClaudeProviderTests: XCTestCase {
             authStore: configuredAuthStore(files: files, now: { now }),
             usageClient: ClaudeUsageClient(httpClient: httpClient),
             logUsageScanner: ClaudeLogFixture.scanner(home: nil),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             now: { now },
             pricing: { TestPricing.bundled }
         )

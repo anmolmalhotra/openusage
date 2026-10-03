@@ -110,11 +110,14 @@ enum DefaultLayout {
         // caret. Chat/Completions carry real counts on free only — on paid they're unlimited
         // (suppressed), so they read "No data" there.
         "copilot.orgCredits", "copilot.orgSpend", "copilot.chat", "copilot.completions",
+        // Optional Pi history stays disabled initially; when enabled, spend rows are On Demand.
+        "copilot.today", "copilot.yesterday", "copilot.last30",
         "devin.extra",
         "grok.payAsYouGo", "grok.today", "grok.yesterday", "grok.last30",
         // Ollama: Session, Weekly, and Monthly stay above the fold; the rolling four-week spend total
         // (always $0.00 on a subscription, real only for pay-as-you-go) sits below the caret.
         "ollama.last4Weeks",
+        "ollama.today", "ollama.yesterday", "ollama.last30",
         // OpenCode: the three Go caps (Session/Weekly/Monthly) and Usage Trend stay above the fold —
         // matching every other provider — with the spend tiles (Today/Yesterday/Last 30 Days) below.
         "opencode.today", "opencode.yesterday", "opencode.last30",
@@ -122,6 +125,6 @@ enum DefaultLayout {
         // sit below the caret.
         "openrouter.today", "openrouter.week", "openrouter.month", "openrouter.keyLimit",
         // Z.ai: Session meter stays above the fold; Web Searches (monthly count) sits below the caret.
-        "zai.webSearches"
+        "zai.webSearches", "zai.today", "zai.yesterday", "zai.last30"
     ]
 }

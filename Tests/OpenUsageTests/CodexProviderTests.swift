@@ -489,6 +489,7 @@ final class CodexProviderTests: XCTestCase {
                 body: Data(#"{"rate_limit":{"secondary_window":{"used_percent":58,"limit_window_seconds":604800,"reset_after_seconds":3600}}}"#.utf8)
             ))),
             logUsageScanner: CodexLogFixture.scanner(home: home),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             allowsUnattributedHistory: false,
             now: { Date(timeIntervalSince1970: 4_075_747_200) },
             pricing: {
@@ -529,6 +530,7 @@ final class CodexProviderTests: XCTestCase {
             ),
             usageClient: CodexUsageClient(http: httpClient),
             logUsageScanner: CodexLogFixture.scanner(home: home),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             // Assert the rollout scanner's own output: keep the unattributed sources out of the
             // snapshot. Otherwise a developer machine with local OpenCode/pi Codex history folds that
             // real spend in, and this assertion compares it against these fixture numbers.
@@ -562,8 +564,6 @@ final class CodexProviderTests: XCTestCase {
     }
 
     func testOpenCodeCodexOAuthUsageIsMergedIntoCodexHistory() async throws {
-        // A far-future fixture keeps PiUsageScanner.shared from folding the developer's real local pi
-        // history into this integration test.
         let now = OpenUsageISO8601.date(from: "2099-02-20T16:00:00.000Z")!
         let milliseconds = Int(OpenUsageISO8601.date(
             from: "2099-02-20T14:00:00.000Z"
@@ -586,6 +586,7 @@ final class CodexProviderTests: XCTestCase {
                 statusCode: 200, headers: [:], body: Data("{}".utf8)
             ))),
             logUsageScanner: CodexLogFixture.scanner(home: nil),
+            piUsageScanner: PiUsageFixture.emptyScanner(),
             openCodeUsageScanner: openCodeScanner,
             now: { now },
             pricing: {

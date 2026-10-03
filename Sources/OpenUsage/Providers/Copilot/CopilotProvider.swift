@@ -20,6 +20,8 @@ final class CopilotProvider: ProviderRuntime {
     let usageClient: CopilotUsageClient
     let orgBillingClient: CopilotOrgBillingClient
     let defaults: UserDefaults
+    let piUsageScanner: PiUsageScanner
+    let pricing: @Sendable () async -> ModelPricing
     let now: @Sendable () -> Date
 
     init(
@@ -27,12 +29,16 @@ final class CopilotProvider: ProviderRuntime {
         usageClient: CopilotUsageClient = CopilotUsageClient(),
         orgBillingClient: CopilotOrgBillingClient = CopilotOrgBillingClient(),
         defaults: UserDefaults = .standard,
-        now: @escaping @Sendable () -> Date = Date.init
+        piUsageScanner: PiUsageScanner = PiUsageScanner(),
+        now: @escaping @Sendable () -> Date = Date.init,
+        pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
         self.authStore = authStore
         self.usageClient = usageClient
         self.orgBillingClient = orgBillingClient
         self.defaults = defaults
+        self.piUsageScanner = piUsageScanner
+        self.pricing = pricing
         self.now = now
     }
 
@@ -49,16 +55,32 @@ final class CopilotProvider: ProviderRuntime {
             .percent(id: "copilot.chat", provider: provider, title: "Chat")
                 .exportingLimit("chat", unit: "percent"),
             .percent(id: "copilot.completions", provider: provider, title: "Completions")
-                .exportingLimit("completions", unit: "percent")
-        ]
+                .exportingLimit("completions", unit: "percent"),
+            .usageTrend(provider: provider)
+                .exportingHistory(
+                    scope: .machineLocal,
+                    estimatedCost: true,
+                    sourceNote: "From your pi sessions (estimated)"
+                )
+        ] + WidgetDescriptor.spendTiles(provider: provider)
     }
 
     func hasLocalCredentials() async -> Bool {
         // Same source as `refresh()`: editor config, gh config, or the gh keychain entry.
-        await loadOffMainActor { [authStore] in authStore.loadToken() } != nil
+        // Pi history is opt-in, so local sessions alone must not enable this card.
+        return await loadOffMainActor { [authStore] in authStore.loadToken() } != nil
     }
 
     func refresh() async -> ProviderSnapshot {
+        let snapshot = await refreshNative()
+        let refreshedAt = now()
+        let scan = await piUsageScanner.scan(cardID: provider.id, now: refreshedAt, pricing: await pricing())
+        return PiUsageHistory.appending(
+            scan, to: snapshot, sourceNote: "From your pi sessions (estimated)", now: refreshedAt
+        )
+    }
+    
+    private func refreshNative() async -> ProviderSnapshot {
         let token = await loadOffMainActor { [authStore] in authStore.loadToken() }
         guard let token else {
             return ProviderSnapshot.error(provider: provider, error: CopilotAuthError.notLoggedIn)

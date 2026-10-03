@@ -56,7 +56,9 @@ final class OpenCodeProvider: ProviderRuntime {
     let authStore: OpenCodeAuthStore
     let usageClient: OpenCodeUsageClient
     let usageScanner: OpenCodeUsageScanner
+    let piUsageScanner: PiUsageScanner
     let now: @Sendable () -> Date
+    let pricing: @Sendable () async -> ModelPricing
 
     /// Names the local source on hover (the dollars can only undercount true account usage — this
     /// machine only). No "(estimated)": OpenCode records its own per-message cost, so the values are
@@ -71,12 +73,16 @@ final class OpenCodeProvider: ProviderRuntime {
         authStore: OpenCodeAuthStore = OpenCodeAuthStore(),
         usageClient: OpenCodeUsageClient = OpenCodeUsageClient(),
         usageScanner: OpenCodeUsageScanner = OpenCodeUsageScanner(),
-        now: @escaping @Sendable () -> Date = Date.init
+        piUsageScanner: PiUsageScanner = PiUsageScanner(),
+        now: @escaping @Sendable () -> Date = Date.init,
+        pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
         self.authStore = authStore
         self.usageClient = usageClient
         self.usageScanner = usageScanner
+        self.piUsageScanner = piUsageScanner
         self.now = now
+        self.pricing = pricing
     }
 
     var widgetDescriptors: [WidgetDescriptor] {
@@ -92,8 +98,8 @@ final class OpenCodeProvider: ProviderRuntime {
             .usageTrend(provider: provider)
                 .exportingHistory(
                     scope: .machineLocal,
-                    estimatedCost: false,
-                    sourceNote: sourceNote
+                    estimatedCost: true,
+                    sourceNote: "From your OpenCode and Pi logs (estimated)"
                 )
         ] + WidgetDescriptor.spendTiles(provider: provider)
     }
@@ -102,7 +108,7 @@ final class OpenCodeProvider: ProviderRuntime {
         // Same sources as `refresh()`: the local `opencode-go` auth key, or any hosted usage already in
         // the local database. Local-only, off the main actor. An unreadable auth.json is itself an
         // OpenCode footprint — enable the provider so `refresh()` can surface the actionable error.
-        await loadOffMainActor { [authStore, usageScanner] in
+        let hasNativeCredentials = await loadOffMainActor { [authStore, usageScanner] in
             do {
                 if try authStore.goAPIKey() != nil { return true }
             } catch {
@@ -110,13 +116,25 @@ final class OpenCodeProvider: ProviderRuntime {
             }
             return usageScanner.hasHostedUsage()
         }
+        if hasNativeCredentials { return true }
+        return await piUsageScanner.hasUsage(cardID: provider.id, now: now())
     }
 
     func refresh() async -> ProviderSnapshot {
-        // One clock for the whole refresh, so the scan cutoff, tiles, trend, and snapshot timestamp
-        // can't straddle a midnight boundary.
+        // Native and Pi history share a clock so the refresh cannot straddle a midnight boundary.
         let refreshedAt = now()
+        let snapshot = await refreshNative(refreshedAt: refreshedAt)
+        let piScan = await piUsageScanner.scan(
+            cardID: provider.id, now: refreshedAt, pricing: await pricing()
+        )
+        return PiUsageHistory.appending(
+            piScan, to: snapshot,
+            sourceNote: "From your OpenCode and Pi logs (estimated)",
+            now: refreshedAt
+        )
+    }
 
+    private func refreshNative(refreshedAt: Date) async -> ProviderSnapshot {
         var goKey: String?
         var authReadError: OpenCodeUsageError?
         do {

@@ -25,6 +25,15 @@ window you have used — never when the current one started or ends. These meter
 countdown, rather than a guessed one. Monthly also has no reset countdown. Local models don't count
 toward these limits; only cloud models do.
 
+## Pi Usage History
+
+[Pi sessions](pi.md) recorded with provider `ollama` contribute local Usage Trend, Today,
+Yesterday, and Last 30 Days metrics. All four start disabled; enable them in Customize. These
+figures cover Pi activity only, separate from the service's live quota or billing metrics.
+Pi logs alone do not switch on the card; enable both the card and the metrics you want in Customize.
+Local history remains available without a native login or after a failed live request, with a
+warning explaining the unavailable meters. Pi logs do not supply credentials for those meters.
+
 ## Where credentials come from
 
 Nothing to paste. Ollama creates a signing key at `~/.ollama/id_ed25519` the first time it runs, and

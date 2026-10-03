@@ -14,6 +14,7 @@ final class GrokProvider: ProviderRuntime {
     let authStore: GrokAuthStore
     let usageClient: GrokUsageClient
     let logUsageScanner: GrokLogUsageScanner
+    let piUsageScanner: PiUsageScanner
     let now: @Sendable () -> Date
     let pricing: @Sendable () async -> ModelPricing
 
@@ -21,12 +22,14 @@ final class GrokProvider: ProviderRuntime {
         authStore: GrokAuthStore = GrokAuthStore(),
         usageClient: GrokUsageClient = GrokUsageClient(),
         logUsageScanner: GrokLogUsageScanner = GrokLogUsageScanner(),
+        piUsageScanner: PiUsageScanner = PiUsageScanner(),
         now: @escaping @Sendable () -> Date = Date.init,
         pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
         self.authStore = authStore
         self.usageClient = usageClient
         self.logUsageScanner = logUsageScanner
+        self.piUsageScanner = piUsageScanner
         self.now = now
         self.pricing = pricing
     }
@@ -40,7 +43,7 @@ final class GrokProvider: ProviderRuntime {
                 .exportingHistory(
                     scope: .machineLocal,
                     estimatedCost: true,
-                    sourceNote: "From your Grok logs (estimated)"
+                    sourceNote: "From your Grok and Pi logs (estimated)"
                 )
             // Local spend tiles from completed turns in the Grok CLI's session transcripts.
         ] + WidgetDescriptor.spendTiles(provider: provider)
@@ -48,12 +51,36 @@ final class GrokProvider: ProviderRuntime {
 
     func hasLocalCredentials() async -> Bool {
         // Same source as `refresh()`: ~/.grok/auth.json with at least one keyed entry.
-        await loadOffMainActor { [authStore] in
+        let hasNativeCredentials = await loadOffMainActor { [authStore] in
             ((try? authStore.loadAuthCandidates()) ?? []).isEmpty == false
         }
+        if hasNativeCredentials { return true }
+        return await piUsageScanner.hasUsage(cardID: provider.id, now: now())
     }
 
     func refresh() async -> ProviderSnapshot {
+        let snapshot = await refreshNative()
+        let refreshedAt = now()
+        let modelPricing = await pricing()
+        let piScan = await piUsageScanner.scan(
+            cardID: provider.id, now: refreshedAt, pricing: modelPricing
+        )
+        // A quota failure must not replace intact local history with only Pi's smaller slice.
+        let nativeScan: LogUsageScan?
+        if snapshot.errorCategory != nil {
+            nativeScan = await logUsageScanner.scan(daysBack: 30, now: refreshedAt, pricing: modelPricing)
+        } else {
+            nativeScan = nil
+        }
+        let localScan = DailyUsageAccumulator.merged([nativeScan, piScan])
+        return PiUsageHistory.appending(
+            localScan, to: snapshot,
+            sourceNote: piScan == nil ? "From your Grok logs (estimated)" : "From your Grok and Pi logs (estimated)",
+            now: refreshedAt
+        )
+    }
+    
+    private func refreshNative() async -> ProviderSnapshot {
         do {
             return try await loadAndProbe()
         } catch {

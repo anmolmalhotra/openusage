@@ -68,7 +68,8 @@ final class ZAIQuotaValidationProviderTests: XCTestCase {
                     )
                 }
                 return HTTPResponse(statusCode: 200, headers: [:], body: Data(#"{"data":[]}"#.utf8))
-            })
+            }),
+            piUsageScanner: PiUsageFixture.emptyScanner()
         )
 
         let snapshot = await provider.refresh()

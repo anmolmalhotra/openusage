@@ -41,6 +41,12 @@ You can also provide the key directly (checked in this order, first match wins):
 A key saved through the app overrides an environment key (the config file is checked first); removing
 the saved key falls back to the environment key, or to none.
 
+## Pi Usage
+
+Pi usage through OpenRouter is covered by the existing API metrics for the key configured in
+OpenUsage. Use the same key in Pi when you want those requests reflected here. OpenUsage does not
+add Pi session costs on top of the API figures or import Pi's credentials. See [Pi Usage](pi.md).
+
 ## Troubleshooting
 
 - **"No OpenRouter API key"** — add the key in Settings → API Keys (or the config file / env var), then refresh.

@@ -89,6 +89,11 @@ individual records are skipped and logged; local spend can be incomplete if a sk
 
 For supported GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 models, requests above 272k input tokens use OpenAI's long-context rates for the whole request. These Codex-specific request rules apply consistently to native Codex logs and zero-cost Codex OAuth usage imported from pi or OpenCode. Daybreak Blue usage is priced as GPT-5.6 Sol, matching OpenAI's published alias and Daybreak pricing. Cached input uses the published cache-read discount when the pricing source provides one; otherwise it is estimated at the full input rate. Fast/priority estimates use each model's published Codex multiplier (for example, GPT-5.5 uses 2.5×); Ultrafast is 6× for GPT-6 Astra and uses the Fast multiplier for other models. Model names ending in `-fast` are normalized to their unscaled base rate before that multiplier is applied once.
 
+Pi's `openai`, `openai-codex`, and `codex` provider names all feed this card's local history,
+subject to the account safeguards above. This includes direct OpenAI API usage recorded by Pi;
+it does not create or consume a ChatGPT subscription meter in OpenUsage. Other gateways keep their
+own provider identity. See [Pi Usage](pi.md) for attribution and supported log locations.
+
 ## Troubleshooting
 
 - **"Not logged in"** — run `codex` and sign in, then refresh.

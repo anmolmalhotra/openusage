@@ -29,7 +29,7 @@ final class OllamaMonthlyUsageTests: XCTestCase {
         let body = Data(#"{"limits":{"session":{"usage":0.1},"weekly":{"usage":0.2},"monthly":{"usage":0.053}},"activity":{"cost":"1.25"}}"#.utf8)
         let lines = try OllamaUsageMapper.usageLines(body)
 
-        XCTAssertEqual(lines.map(\.label), OllamaProvider().widgetDescriptors.map(\.metricLabel))
+        XCTAssertEqual(lines.map(\.label), OllamaProvider(piUsageScanner: PiUsageFixture.emptyScanner()).widgetDescriptors.prefix(4).map(\.metricLabel))
         XCTAssertEqual(lines.map(\.label), ["Session", "Weekly", "Monthly", "Last 4 Weeks"])
     }
 
@@ -49,7 +49,7 @@ final class OllamaMonthlyUsageTests: XCTestCase {
     }
 
     func testMonthlyUsageReachesDashboardDataAndBothLocalAPIs() async throws {
-        let provider = OllamaProvider()
+        let provider = OllamaProvider(piUsageScanner: PiUsageFixture.emptyScanner())
         let registry = WidgetRegistry.from([provider])
         let snapshot = ProviderSnapshot(
             providerID: "ollama", displayName: "Ollama", plan: "Free",
@@ -94,7 +94,7 @@ final class OllamaMonthlyUsageTests: XCTestCase {
     }
 
     func testMonthlyDefaultPlacementOnFreshInstallAndUpgradePreservesOptOuts() throws {
-        let registry = WidgetRegistry.from([OllamaProvider()])
+        let registry = WidgetRegistry.from([OllamaProvider(piUsageScanner: PiUsageFixture.emptyScanner())])
         let defaults = makeDefaults()
         let fresh = LayoutStore(registry: registry, defaults: defaults, storageKey: "layout")
         XCTAssertEqual(fresh.placed.map(\.descriptorID), [

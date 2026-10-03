@@ -122,7 +122,7 @@ final class PiUsageScannerTests: XCTestCase {
     }
 
     func testDedupDropsRepeatedIDs() {
-        let entries = [PiUsageScanner.parseLine(line(id: "dup"))!, PiUsageScanner.parseLine(line(id: "dup"))!]
+        let entries = [PiUsageScanner.parseLine(line(id: "dup"), sessionID: "session")!, PiUsageScanner.parseLine(line(id: "dup"), sessionID: "session")!]
         let scan = PiUsageScanner.aggregate(entries: PiUsageScanner.dedup(entries), cardID: "claude", since: .distantPast, pricing: .empty)
         XCTAssertEqual(scan.series.daily.first?.costUSD ?? 0, 0.5, accuracy: 0.0001)
     }

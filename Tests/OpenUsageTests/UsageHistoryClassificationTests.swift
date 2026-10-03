@@ -8,9 +8,12 @@ final class UsageHistoryClassificationTests: XCTestCase {
             AntigravityProvider().widgetDescriptors,
             ClaudeProvider().widgetDescriptors,
             CodexProvider().widgetDescriptors,
+            CopilotProvider().widgetDescriptors,
             CursorProvider().widgetDescriptors,
             GrokProvider().widgetDescriptors,
-            OpenCodeProvider().widgetDescriptors
+            OllamaProvider().widgetDescriptors,
+            OpenCodeProvider().widgetDescriptors,
+            ZAIProvider().widgetDescriptors
         ]
 
         for descriptors in descriptorSets {
@@ -25,9 +28,12 @@ final class UsageHistoryClassificationTests: XCTestCase {
             "antigravity": .machineLocal,
             "claude": .machineLocal,
             "codex": .machineLocal,
+            "copilot": .machineLocal,
             "cursor": .accountWide,
             "grok": .machineLocal,
-            "opencode": .machineLocal
+            "ollama": .machineLocal,
+            "opencode": .machineLocal,
+            "zai": .machineLocal
         ])
     }
 }

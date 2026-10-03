@@ -20,6 +20,7 @@ final class AntigravityProvider: ProviderRuntime {
     let usageClient: AntigravityUsageClient
     let discovery: LanguageServerDiscovery
     let dbUsageScanner: AntigravityDbUsageScanner
+    let piUsageScanner: PiUsageScanner
     let now: @Sendable () -> Date
     let pricing: @Sendable () async -> ModelPricing
 
@@ -30,6 +31,7 @@ final class AntigravityProvider: ProviderRuntime {
         usageClient: AntigravityUsageClient = AntigravityUsageClient(),
         discovery: LanguageServerDiscovery = LanguageServerDiscovery(),
         dbUsageScanner: AntigravityDbUsageScanner = AntigravityDbUsageScanner(),
+        piUsageScanner: PiUsageScanner = PiUsageScanner(),
         now: @escaping @Sendable () -> Date = Date.init,
         pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
@@ -37,6 +39,7 @@ final class AntigravityProvider: ProviderRuntime {
         self.usageClient = usageClient
         self.discovery = discovery
         self.dbUsageScanner = dbUsageScanner
+        self.piUsageScanner = piUsageScanner
         self.now = now
         self.pricing = pricing
     }
@@ -55,7 +58,7 @@ final class AntigravityProvider: ProviderRuntime {
                 .exportingHistory(
                     scope: .machineLocal,
                     estimatedCost: true,
-                    sourceNote: Self.usageSourceNote
+                    sourceNote: "From your Antigravity conversations and Pi logs (estimated)"
                 )
         ] + WidgetDescriptor.spendTiles(provider: provider)
     }
@@ -69,7 +72,7 @@ final class AntigravityProvider: ProviderRuntime {
             }
             guard keychainToken != nil else {
                 await loadOffMainActor { [authStore] in authStore.discardCachedToken() }
-                return false
+                return await piUsageScanner.hasUsage(cardID: provider.id, now: now())
             }
             return true
         } catch {
@@ -79,9 +82,30 @@ final class AntigravityProvider: ProviderRuntime {
     }
 
     func refresh() async -> ProviderSnapshot {
+        let refreshedAt = now()
+        let snapshot = await refreshNative(refreshedAt: refreshedAt)
+        let modelPricing = await pricing()
+        let piScan = await piUsageScanner.scan(
+            cardID: provider.id, now: refreshedAt, pricing: modelPricing
+        )
+        // A quota failure must not replace intact local history with only Pi's smaller slice.
+        let nativeScan: LogUsageScan?
+        if snapshot.errorCategory != nil {
+            nativeScan = await dbUsageScanner.scan(daysBack: 30, now: refreshedAt, pricing: modelPricing)
+        } else {
+            nativeScan = nil
+        }
+        let localScan = DailyUsageAccumulator.merged([nativeScan, piScan])
+        return PiUsageHistory.appending(
+            localScan, to: snapshot,
+            sourceNote: piScan == nil ? "From your Antigravity conversations (estimated)" : "From your Antigravity conversations and Pi logs (estimated)",
+            now: refreshedAt
+        )
+    }
+    
+    private func refreshNative(refreshedAt: Date) async -> ProviderSnapshot {
         do {
             var result = try await probe()
-            let refreshedAt = now()
             var usageHistory: ProviderUsageHistory?
 
             if let scan = await dbUsageScanner.scan(daysBack: 30, now: refreshedAt, pricing: await pricing()) {

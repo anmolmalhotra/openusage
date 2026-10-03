@@ -41,7 +41,7 @@ API-key traffic is not attributed to Codex.
 
 Go meters are percents from `GET https://opencode.ai/zen/go/v1/usage` — OpenCode's own accounting, not
 an estimate. Each spend tile shows cost and tokens together (`$4.08 · 1.2M tokens`), the same as Claude /
-Codex / Cursor. Those dollars come straight from the per-message cost OpenCode records for its hosted
+Codex / Cursor. Native OpenCode dollars come straight from the per-message cost it records for its hosted
 gateways on this Mac, so they can be lower than account-wide Go usage. A period with no recorded local
 usage reads "No data" rather than a misleading `$0.00`. No log data leaves your Mac.
 
@@ -49,6 +49,11 @@ While the rolling 5-hour session window has no usage in it, the Session row show
 the trailing label; hover explains that the session begins after your first message. Once the window is
 running the row shows the countdown to its reset — including when OpenCode's whole-percent numbers
 still read 0% because less than 1% has been used.
+
+Pi sessions recorded with provider `opencode`, `opencode-go`, or `opencode-zen` are added to the
+same local spend tiles and trend. Positive Pi costs are used directly; missing or zero Pi costs
+use shared model pricing, so a combined total containing those estimates is marked estimated.
+Local Pi history can appear without an OpenCode login or database. See [Pi Usage](pi.md).
 
 ## Troubleshooting
 

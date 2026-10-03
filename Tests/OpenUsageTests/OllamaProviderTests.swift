@@ -241,7 +241,7 @@ final class OllamaUsageMapperTests: XCTestCase {
 
     func testMetricLabelsMatchTheProvidersWidgetDescriptors() async throws {
         let mapped = try OllamaUsageMapper.map(usageBody: data(usageJSON), accountBody: nil)
-        let labels = await MainActor.run { OllamaProvider().widgetDescriptors.map(\.metricLabel) }
+        let labels = await MainActor.run { OllamaProvider(piUsageScanner: PiUsageFixture.emptyScanner()).widgetDescriptors.prefix(4).map(\.metricLabel) }
 
         // This captured response predates the monthly meter and must still omit absent limits.
         XCTAssertEqual(mapped.lines.map(\.label), labels.filter { $0 != "Monthly" })
@@ -288,7 +288,8 @@ final class OllamaProviderRefreshTests: XCTestCase {
         let http = FakeHTTPClient(response: ok(usageJSON))
         let provider = OllamaProvider(
             authStore: OllamaAuthStore(files: FakeFiles()),
-            usageClient: OllamaUsageClient(http: http, now: { Date(timeIntervalSince1970: 0) })
+            usageClient: OllamaUsageClient(http: http, now: { Date(timeIntervalSince1970: 0) }),
+            piUsageScanner: PiUsageFixture.emptyScanner()
         )
 
         let snapshot = await provider.refresh()
@@ -423,7 +424,7 @@ final class OllamaProviderRefreshTests: XCTestCase {
     /// as a usage period would give it the "No usage in this period" hover, which would be wrong for a
     /// subscriber who used Ollama heavily inside their allowance.
     func testSpendRowIsNotMarkedAsAUsagePeriod() {
-        let descriptors = OllamaProvider().widgetDescriptors
+        let descriptors = OllamaProvider(piUsageScanner: PiUsageFixture.emptyScanner()).widgetDescriptors
         let spend = descriptors.first { $0.id == "ollama.last4Weeks" }
 
         XCTAssertEqual(spend?.sample.isUsagePeriod, false)
@@ -432,7 +433,8 @@ final class OllamaProviderRefreshTests: XCTestCase {
     private func makeProvider(http: any HTTPClient) -> OllamaProvider {
         OllamaProvider(
             authStore: OllamaAuthStore(files: FakeFiles([OllamaAuthStore.keyPath: testPrivateKeyPEM])),
-            usageClient: OllamaUsageClient(http: http, now: { Date(timeIntervalSince1970: 0) })
+            usageClient: OllamaUsageClient(http: http, now: { Date(timeIntervalSince1970: 0) }),
+            piUsageScanner: PiUsageFixture.emptyScanner()
         )
     }
 }

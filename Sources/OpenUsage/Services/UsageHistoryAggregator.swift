@@ -183,10 +183,12 @@ enum UsageHistoryAggregator {
 
 enum UsageHistorySnapshotRenderer {
     private static let historyLabels: Set<String> = ["Today", "Yesterday", "Last 30 Days", "Usage Trend"]
+    private static let unknownOnlyWarningPrefix = "Usage totals are unavailable for unknown models: "
 
     static func removingHistory(from snapshot: ProviderSnapshot) -> ProviderSnapshot {
         var result = snapshot
         result.usageHistory = nil
+        result.warning = removingUnknownOnlyWarning(from: result.warning)
         result.lines.removeAll { historyLabels.contains($0.label) }
         return result
     }
@@ -198,7 +200,7 @@ enum UsageHistorySnapshotRenderer {
         now: Date = Date(),
         combined: Bool = true
     ) -> ProviderSnapshot {
-        var result = snapshot
+        var result = applyingPricingWarning(to: snapshot, history: history)
         result.lines.removeAll { historyLabels.contains($0.label) }
         let baseNote = combined ? "Across your Macs · \(descriptor.sourceNote)" : descriptor.sourceNote
         SpendTileMapper.appendTokenUsage(
@@ -219,5 +221,29 @@ enum UsageHistorySnapshotRenderer {
             fallbackPricingModelsByDay: history.fallbackPricingModelsByDay
         )
         return result
+    }
+    
+    /// Also used by providers that build their own local spend rows before peer aggregation.
+    static func applyingPricingWarning(to snapshot: ProviderSnapshot, history: ProviderUsageHistory) -> ProviderSnapshot {
+        var result = snapshot
+        // Unknown-only scans deliberately have no invented token or dollar values. Surface their
+        // pricing problem in the existing provider warning instead of silently showing "No data".
+        result.warning = removingUnknownOnlyWarning(from: result.warning)
+        let hasUsage = history.series.daily.contains { $0.totalTokens > 0 || ($0.costUSD ?? 0) > 0 }
+        let unknownModels = history.unknownModelsByDay.values.reduce(into: Set<String>()) { $0.formUnion($1) }.sorted()
+        if !hasUsage, !unknownModels.isEmpty {
+            let warning = unknownOnlyWarningPrefix + unknownModels.joined(separator: ", ") + "."
+            result.warning = [result.warning, warning].compactMap { $0 }.joined(separator: "\n")
+        }
+        return result
+    }
+    
+    /// Replace only the renderer-owned notice on subsequent renders; live-service warnings remain.
+    private static func removingUnknownOnlyWarning(from warning: String?) -> String? {
+        guard let warning else { return nil }
+        let remaining = warning.components(separatedBy: "\n")
+            .filter { !$0.hasPrefix(unknownOnlyWarningPrefix) }
+            .joined(separator: "\n")
+        return remaining.isEmpty ? nil : remaining
     }
 }

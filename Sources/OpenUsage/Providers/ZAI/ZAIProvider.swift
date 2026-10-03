@@ -14,15 +14,21 @@ final class ZAIProvider: ProviderRuntime {
 
     let authStore: ZAIAuthStore
     let usageClient: ZAIUsageClient
+    let piUsageScanner: PiUsageScanner
+    let pricing: @Sendable () async -> ModelPricing
     let now: @Sendable () -> Date
 
     init(
         authStore: ZAIAuthStore = ZAIAuthStore(),
         usageClient: ZAIUsageClient = ZAIUsageClient(),
-        now: @escaping @Sendable () -> Date = Date.init
+        piUsageScanner: PiUsageScanner = PiUsageScanner(),
+        now: @escaping @Sendable () -> Date = Date.init,
+        pricing: @escaping @Sendable () async -> ModelPricing = { await ModelPricingStore.shared.current() }
     ) {
         self.authStore = authStore
         self.usageClient = usageClient
+        self.piUsageScanner = piUsageScanner
+        self.pricing = pricing
         self.now = now
     }
 
@@ -37,16 +43,32 @@ final class ZAIProvider: ProviderRuntime {
             .boundedCount(id: "zai.webSearches", provider: provider, title: "Web Searches",
                           metricLabel: "Web Searches", limit: 1000, suffix: "searches",
                           periodDurationMs: ZAIUsageMapper.monthlyPeriodMs)
-                .exportingLimit("webSearches", unit: "searches")
-        ]
+                .exportingLimit("webSearches", unit: "searches"),
+            .usageTrend(provider: provider)
+                .exportingHistory(
+                    scope: .machineLocal,
+                    estimatedCost: true,
+                    sourceNote: "From your pi sessions (estimated)"
+                )
+        ] + WidgetDescriptor.spendTiles(provider: provider)
     }
 
     func hasLocalCredentials() async -> Bool {
         // Same source as `refresh()`: a stored or environment-exported API key.
-        await loadOffMainActor { [authStore] in authStore.loadAPIKey() } != nil
+        // Pi history is opt-in, so local sessions alone must not enable this card.
+        return await loadOffMainActor { [authStore] in authStore.loadAPIKey() } != nil
     }
 
     func refresh() async -> ProviderSnapshot {
+        let snapshot = await refreshNative()
+        let refreshedAt = now()
+        let scan = await piUsageScanner.scan(cardID: provider.id, now: refreshedAt, pricing: await pricing())
+        return PiUsageHistory.appending(
+            scan, to: snapshot, sourceNote: "From your pi sessions (estimated)", now: refreshedAt
+        )
+    }
+    
+    private func refreshNative() async -> ProviderSnapshot {
         guard let auth = await loadOffMainActor({ [authStore] in authStore.loadAPIKey() }) else {
             return ProviderSnapshot.error(provider: provider, error: ZAIAuthError.missingKey)
         }
